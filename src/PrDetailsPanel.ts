@@ -31,8 +31,11 @@ export class PrDetailsPanel {
   showDetails(details: IPrDetails): void {
     const panel = this.ensurePanel(`PR #${details.number}`);
     const mermaidScriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", "mermaid.min.js")).toString();
+    const defaultUpdateMethod = vscode.workspace
+      .getConfiguration("githubControlCenter")
+      .get<UpdateBranchMethod>("updateBranch.defaultMethod", "REBASE");
     panel.title = `PR #${details.number}`;
-    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri);
+    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod);
   }
 
   reenableActions(): void {

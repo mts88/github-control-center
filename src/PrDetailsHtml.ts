@@ -301,7 +301,7 @@ function renderTimelineItem(item: IPrTimelineItem, prUrl: string, now: number): 
   </div>`;
 }
 
-function renderMergeBox(details: IPrDetails): string {
+function renderMergeBox(details: IPrDetails, defaultUpdateMethod: UpdateBranchMethod): string {
   const decision = details.reviewDecision ? (REVIEW_DECISION_LABELS[details.reviewDecision] ?? details.reviewDecision) : "● No review required";
   const decisionClass = details.reviewDecision === "APPROVED" ? "ok" : details.reviewDecision === "CHANGES_REQUESTED" ? "ko" : "neutral";
 
@@ -326,15 +326,16 @@ function renderMergeBox(details: IPrDetails): string {
     .map((method) => `<option value="${method}">${MERGE_METHOD_LABELS[method]}</option>`)
     .join("");
 
+  const updateMethodsInOrder: UpdateBranchMethod[] = defaultUpdateMethod === "MERGE" ? ["MERGE", "REBASE"] : ["REBASE", "MERGE"];
+  const updateMethodOptions = updateMethodsInOrder
+    .map((method) => `<option value="${method}">${UPDATE_METHOD_LABELS[method]}</option>`)
+    .join("");
   const updateBranchRow =
     isOpen && details.isBehindBase
       ? `<div class="row merge-actions">
           <span class="neutral">This branch is out-of-date with the base branch</span>
           <button id="update-branch">Update branch</button>
-          <select id="update-method" aria-label="Update method">
-            <option value="REBASE">${UPDATE_METHOD_LABELS.REBASE}</option>
-            <option value="MERGE">${UPDATE_METHOD_LABELS.MERGE}</option>
-          </select>
+          <select id="update-method" aria-label="Update method">${updateMethodOptions}</select>
         </div>`
       : "";
 
@@ -451,7 +452,13 @@ function renderMermaidSupport(details: IPrDetails, nonce: string, mermaidScriptU
   return { scriptTag: `<script nonce="${nonce}" src="${escapeHtml(mermaidScriptUri)}"></script>`, bootstrap };
 }
 
-export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: number, mermaidScriptUri?: string): string {
+export function renderPrDetailsHtml(
+  details: IPrDetails,
+  nonce: string,
+  now: number,
+  mermaidScriptUri?: string,
+  defaultUpdateMethod: UpdateBranchMethod = "REBASE",
+): string {
   const timelineItems = details.timeline.map((item) => renderTimelineItem(item, details.url, now)).join("");
   const olderLink = details.timelineTruncated ? `<a class="older-link" href="${escapeHtml(details.url)}">View older conversation on GitHub</a>` : "";
   const mermaidSupport = renderMermaidSupport(details, nonce, mermaidScriptUri);
@@ -465,7 +472,7 @@ export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: num
         ${timelineItems}
       </div>
       ${olderLink}
-      ${renderMergeBox(details)}
+      ${renderMergeBox(details, defaultUpdateMethod)}
       ${renderComposer(details)}
     </main>
     ${renderSidebar(details)}

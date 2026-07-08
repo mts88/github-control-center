@@ -213,6 +213,15 @@ describe("renderPrDetailsHtml", () => {
       expect(rebaseIndex).toBeLessThan(mergeIndex);
     });
 
+    it("should put the configured default update method first", () => {
+      const html = renderPrDetailsHtml(buildDetails({ isBehindBase: true }), NONCE, NOW, undefined, "MERGE");
+
+      const rebaseIndex = html.indexOf('<option value="REBASE">');
+      const mergeIndex = html.indexOf('<option value="MERGE">');
+      expect(mergeIndex).toBeGreaterThan(-1);
+      expect(mergeIndex).toBeLessThan(rebaseIndex);
+    });
+
     it("should offer Checkout branch on open PRs only", () => {
       expect(render()).toContain('id="checkout"');
       expect(render({ isDraft: true, viewerDidAuthor: true })).toContain('id="checkout"');

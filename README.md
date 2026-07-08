@@ -7,11 +7,11 @@ A VSCode extension built by developers, for developers — to keep your GitHub s
 - **Two views** in the activity bar container: **To Review** (PRs where your review is requested, including team requests) and **My PRs** (your open PRs), both grouped by repository.
 - **Badge count** on the activity bar icon, configurable per list.
 - **Toast notifications** when a new PR requests your review — and when one of your own PRs gets approved or receives a changes request — with quick actions (Open, Settings). Anti-spam by design: the first fetch after a reload never fires a storm.
-- **PR details panel**: click a PR to open a GitHub-like page — conversation timeline, merge box (review decision, checks, conflicts), reviewers, labels, aggregate diffstat — without leaving VSCode.
-- **Act on PRs**: comment, approve, request changes, merge (with the repo-allowed merge methods), mark your own drafts as ready for review, update an out-of-date branch, and check out the PR branch when the repository is open in the workspace. CI check names link straight to their runs.
+- **PR details panel**: click a PR to open a GitHub-like page — conversation timeline with rendered mermaid diagrams, merge box (review decision, checks, conflicts, out-of-date branch), reviewers, labels, aggregate diffstat — without leaving VSCode.
+- **Act on PRs**: comment, approve, request changes, merge (with the repo-allowed merge methods), mark your own drafts as ready for review, update an out-of-date branch (rebase or merge commit, GitHub-style selector), and check out the PR branch when the repository is open in the workspace. CI check names link straight to their runs.
 - **Row shortcuts**: inline icons to check out the PR branch or open it in the browser; right-click to copy the URL or branch name, or mute the repository or its whole organization.
 - **Muting with search**: the "Manage Muted Repositories" command opens a picker that live-searches GitHub as you type — mute/unmute repositories or entire organizations in one click.
-- **Zero runtime dependencies**: native `fetch`, VSCode's built-in GitHub authentication, GitHub-rendered markdown (`bodyHTML`).
+- **Zero runtime dependencies**: native `fetch`, VSCode's built-in GitHub authentication, GitHub-rendered markdown (`bodyHTML`). Mermaid diagrams are rendered by a locally bundled copy of mermaid — no CDN, nothing leaves your machine.
 
 ## Authentication
 
@@ -26,6 +26,7 @@ The extension uses VSCode's GitHub authentication provider with the `repo` and `
 | `githubControlCenter.notifications.enabled` | `true` | Show notifications for new review requests and for review outcomes on your own PRs. |
 | `githubControlCenter.mutedRepos` | `[]` | Entries hidden from lists, badge, and notifications: `owner/repo` for one repository, `owner` (or `owner/*`) for a whole organization. Best edited via the **Manage Muted Repositories** command (searchable picker). |
 | `githubControlCenter.toReview.hideDrafts` | `false` | Hide draft PRs from the To Review list, badge, and notifications. |
+| `githubControlCenter.updateBranch.defaultMethod` | `REBASE` | Method preselected for the Update branch action (`REBASE` or `MERGE`). |
 
 ## Muting repositories and organizations
 

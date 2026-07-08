@@ -166,6 +166,16 @@
           "type": "boolean",
           "default": false,
           "description": "Hide draft PRs from the To Review list, the badge, and notifications."
+        },
+        "githubControlCenter.updateBranch.defaultMethod": {
+          "type": "string",
+          "enum": ["REBASE", "MERGE"],
+          "enumDescriptions": [
+            "Update with rebase (force-pushes the PR branch)",
+            "Update with a merge commit"
+          ],
+          "default": "REBASE",
+          "description": "Method preselected for the Update branch action in the PR details panel."
         }
       }
     },
