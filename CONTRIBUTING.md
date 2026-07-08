@@ -18,6 +18,7 @@ yarn install
 yarn build        # bundle src/extension.ts → dist/extension.js with esbuild
 yarn watch        # esbuild watch mode
 yarn typecheck    # tsc --noEmit (esbuild does not type-check)
+yarn lint         # ESLint (flat config, typescript-eslint)
 yarn test         # Vitest, single run
 yarn test:watch   # Vitest watch mode
 ```
@@ -49,7 +50,7 @@ Commit messages MUST follow [Conventional Commits](https://www.conventionalcommi
 
 The commit type drives the release: `fix:` → patch, `feat:` → minor, `BREAKING CHANGE:` footer or `!` → major. Other types never trigger a release — use them honestly.
 
-Before opening a PR: `yarn typecheck && yarn test && yarn build` must pass (CI runs the same checks). New features open as draft PRs.
+Before opening a PR: `yarn lint && yarn typecheck && yarn test && yarn build` must pass (CI runs the same checks). New features open as draft PRs.
 
 ## Releases
 
