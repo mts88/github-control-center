@@ -79,4 +79,6 @@ Data flow, one cycle every 150s (`POLL_INTERVAL_MS` in `extension.ts`) plus manu
 
 - Interfaces are `I`-prefixed (`IPullRequest`); no `any`; named function declarations.
 - Everything is in English, UI strings included.
+- **PR descriptions: ALWAYS use the project-local `generate-pr-summary` skill (`.claude/skills/generate-pr-summary/`)** — never a global or plugin-provided PR-summary skill: external variants inject issue-tracker and multi-repo process that does not exist in this repository.
+- This repository is personal and public: never reference employers, internal company tooling, or internal ticket systems in code, docs, commits, or PRs.
 - `packageManager` field in package.json exists but corepack is not used — `.yarnrc.yml` `yarnPath` drives the Yarn version.
