@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.vsix
+
+# Yarn 4 — yarnPath binary in .yarn/releases MUST stay committed
+.yarn/*
+!.yarn/releases
+!.yarn/patches
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions

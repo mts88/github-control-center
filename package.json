@@ -1,0 +1,274 @@
+{
+  "name": "github-control-center",
+  "displayName": "GitHub Control Center",
+  "description": "A control center for a developer's daily GitHub activities: PRs to review, your PRs, notifications, and a full PR page inside VSCode",
+  "version": "0.0.1",
+  "publisher": "mts88",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mts88/github-control-center.git"
+  },
+  "engines": {
+    "vscode": "^1.90.0",
+    "node": ">=22"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "keywords": [
+    "git",
+    "github",
+    "pull request",
+    "code review",
+    "notifications"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "githubControlCenter",
+          "title": "GitHub Control Center",
+          "icon": "$(radio-tower)"
+        }
+      ]
+    },
+    "views": {
+      "githubControlCenter": [
+        {
+          "id": "githubControlCenter.toReview",
+          "name": "To Review",
+          "icon": "$(git-pull-request)"
+        },
+        {
+          "id": "githubControlCenter.mine",
+          "name": "My PRs",
+          "icon": "$(git-pull-request)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "githubControlCenter.toReview",
+        "contents": "Sign in to GitHub to see pull requests waiting for your review.\n[Sign in to GitHub](command:githubControlCenter.signIn)",
+        "when": "!githubControlCenter.signedIn"
+      },
+      {
+        "view": "githubControlCenter.toReview",
+        "contents": "No pull requests waiting for your review. All clear. 🎉",
+        "when": "githubControlCenter.signedIn"
+      },
+      {
+        "view": "githubControlCenter.mine",
+        "contents": "Sign in to GitHub to see your open pull requests.\n[Sign in to GitHub](command:githubControlCenter.signIn)",
+        "when": "!githubControlCenter.signedIn"
+      },
+      {
+        "view": "githubControlCenter.mine",
+        "contents": "You have no open pull requests.",
+        "when": "githubControlCenter.signedIn"
+      }
+    ],
+    "commands": [
+      {
+        "command": "githubControlCenter.refresh",
+        "title": "Refresh",
+        "category": "GitHub Control Center",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "githubControlCenter.signIn",
+        "title": "Sign in to GitHub",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.openPr",
+        "title": "Open on GitHub",
+        "category": "GitHub Control Center",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "githubControlCenter.openPrDetails",
+        "title": "Open Pull Request Details",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.openSettings",
+        "title": "Settings",
+        "category": "GitHub Control Center",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "githubControlCenter.copyPrUrl",
+        "title": "Copy PR URL",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.copyBranchName",
+        "title": "Copy Branch Name",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.muteRepo",
+        "title": "Mute Repository",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.checkoutPr",
+        "title": "Checkout Branch",
+        "category": "GitHub Control Center",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "githubControlCenter.muteOrg",
+        "title": "Mute Organization",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.manageMutedRepos",
+        "title": "Manage Muted Repositories",
+        "category": "GitHub Control Center"
+      }
+    ],
+    "configuration": {
+      "title": "GitHub Control Center",
+      "properties": {
+        "githubControlCenter.badge.countToReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include PRs waiting for your review in the activity bar badge count."
+        },
+        "githubControlCenter.badge.countMine": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include your own open PRs in the activity bar badge count."
+        },
+        "githubControlCenter.notifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show VSCode notifications for new review requests and for review outcomes (approved / changes requested) on your own PRs."
+        },
+        "githubControlCenter.mutedRepos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Entries to hide from both lists, the badge, and notifications: `owner/repo` mutes a repository, `owner` (or `owner/*`) mutes a whole organization. Tip: use the **GitHub Control Center: Manage Muted Repositories** command for a searchable picker."
+        },
+        "githubControlCenter.toReview.hideDrafts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hide draft PRs from the To Review list, the badge, and notifications."
+        }
+      }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "githubControlCenter.refresh",
+          "when": "view == githubControlCenter.toReview || view == githubControlCenter.mine",
+          "group": "navigation@1"
+        },
+        {
+          "command": "githubControlCenter.openSettings",
+          "when": "view == githubControlCenter.toReview || view == githubControlCenter.mine",
+          "group": "navigation@2"
+        },
+        {
+          "command": "githubControlCenter.manageMutedRepos",
+          "when": "view == githubControlCenter.toReview || view == githubControlCenter.mine",
+          "group": "1_manage"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "githubControlCenter.openPr",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.openPrDetails",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.copyPrUrl",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.copyBranchName",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.muteRepo",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.checkoutPr",
+          "when": "false"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "githubControlCenter.checkoutPr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "group": "inline@1"
+        },
+        {
+          "command": "githubControlCenter.openPr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "group": "inline@2"
+        },
+        {
+          "command": "githubControlCenter.copyPrUrl",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "group": "1_copy@1"
+        },
+        {
+          "command": "githubControlCenter.copyBranchName",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "group": "1_copy@2"
+        },
+        {
+          "command": "githubControlCenter.muteRepo",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "githubControlCenter.muteOrg",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "group": "2_manage@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "postinstall": "git config core.hooksPath .githooks || true",
+    "vscode:prepublish": "node esbuild.js",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.2.0",
+    "@commitlint/config-conventional": "^21.2.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/exec": "^7.1.0",
+    "@semantic-release/git": "^10.0.1",
+    "@types/node": "^22.12.0",
+    "@types/vscode": "^1.90.0",
+    "conventional-changelog-conventionalcommits": "^10.2.1",
+    "esbuild": "^0.21.5",
+    "semantic-release": "^25.0.5",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "yarn@4.17.0"
+}
