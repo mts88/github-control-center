@@ -52,6 +52,8 @@ The commit type drives the release: `fix:` → patch, `feat:` → minor, `BREAKI
 
 Before opening a PR: `yarn lint && yarn typecheck && yarn test && yarn build` must pass (CI runs the same checks). New features open as draft PRs.
 
+PR rules, enforced by the PR Validation workflow: the **title must be a Conventional Commit** (it becomes the squash commit that drives the release — a bot comment explains any violation and disappears once fixed), and the **author is auto-assigned** when no assignee is set.
+
 ## Releases
 
 Releases are fully automated by semantic-release on every push to `main`: version bump, `CHANGELOG.md`, git tag, GitHub Release with the packaged `.vsix` attached.
