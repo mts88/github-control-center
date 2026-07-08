@@ -20,6 +20,7 @@ export interface IPrSnapshot {
 
 export type MergeableState = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 export type MergeMethod = "MERGE" | "SQUASH" | "REBASE";
+export type UpdateBranchMethod = "MERGE" | "REBASE";
 export type PrState = "OPEN" | "CLOSED" | "MERGED";
 
 export interface IPrReviewer {

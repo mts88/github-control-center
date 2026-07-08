@@ -1,13 +1,13 @@
 import * as vscode from "vscode";
 import { renderMessageHtml, renderPrDetailsHtml } from "./PrDetailsHtml";
-import type { IPrDetails, MergeMethod } from "./types";
+import type { IPrDetails, MergeMethod, UpdateBranchMethod } from "./types";
 
 export type IPanelMessage =
   | { command: "comment"; text: string }
   | { command: "review"; event: "APPROVE" | "REQUEST_CHANGES"; text: string }
   | { command: "merge"; method: MergeMethod }
   | { command: "readyForReview" }
-  | { command: "updateBranch" }
+  | { command: "updateBranch"; method: UpdateBranchMethod }
   | { command: "checkout" };
 
 export class PrDetailsPanel {

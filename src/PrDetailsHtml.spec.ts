@@ -160,6 +160,16 @@ describe("renderPrDetailsHtml", () => {
       expect(render({ isBehindBase: true, state: "MERGED" })).not.toContain('id="update-branch"');
     });
 
+    it("should offer both update methods with rebase as the default", () => {
+      const html = render({ isBehindBase: true });
+
+      const rebaseIndex = html.indexOf('<option value="REBASE">Update with rebase</option>');
+      const mergeIndex = html.indexOf('<option value="MERGE">Update with merge commit</option>');
+      expect(rebaseIndex).toBeGreaterThan(-1);
+      expect(mergeIndex).toBeGreaterThan(-1);
+      expect(rebaseIndex).toBeLessThan(mergeIndex);
+    });
+
     it("should offer Checkout branch on open PRs only", () => {
       expect(render()).toContain('id="checkout"');
       expect(render({ isDraft: true, viewerDidAuthor: true })).toContain('id="checkout"');

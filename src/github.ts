@@ -10,6 +10,7 @@ import type {
   MergeMethod,
   MergeableState,
   PrState,
+  UpdateBranchMethod,
 } from "./types";
 
 const GITHUB_AUTH_PROVIDER = "github";
@@ -280,15 +281,15 @@ export async function markPrReadyForReview(token: string, prId: string): Promise
 }
 
 const UPDATE_BRANCH_MUTATION = `
-  mutation ($id: ID!) {
-    updatePullRequestBranch(input: { pullRequestId: $id }) {
+  mutation ($id: ID!, $method: PullRequestBranchUpdateMethod!) {
+    updatePullRequestBranch(input: { pullRequestId: $id, updateMethod: $method }) {
       clientMutationId
     }
   }
 `;
 
-export async function updatePrBranch(token: string, prId: string): Promise<void> {
-  await postGraphQl(token, UPDATE_BRANCH_MUTATION, { id: prId });
+export async function updatePrBranch(token: string, prId: string, method: UpdateBranchMethod): Promise<void> {
+  await postGraphQl(token, UPDATE_BRANCH_MUTATION, { id: prId, method });
 }
 
 const REPO_SEARCH_QUERY = `

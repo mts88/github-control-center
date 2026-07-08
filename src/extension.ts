@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { addPrComment, fetchPrDetails, fetchPullRequests, getSession, markPrReadyForReview, mergePr, searchRepositories, submitPrReview, updatePrBranch } from "./github";
 import { isRepoMuted } from "./muting";
 import { NewPrTracker } from "./NewPrTracker";
-import { MERGE_METHOD_LABELS } from "./PrDetailsHtml";
+import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
 import { PrDetailsPanel, type IPanelMessage } from "./PrDetailsPanel";
 import { PrTreeProvider, type TreeNode } from "./PrTreeProvider";
 import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
@@ -154,7 +154,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     if (message.command === "updateBranch") {
-      await runPrMutation(pr, "Update branch", `Branch updated: ${pr.title}`, (token) => updatePrBranch(token, pr.id));
+      // never trust the webview: only the two known update methods are accepted
+      const isKnownMethod = message.method === "REBASE" || message.method === "MERGE";
+      if (!isKnownMethod) {
+        detailsPanel.reenableActions();
+        return;
+      }
+      const methodLabel = UPDATE_METHOD_LABELS[message.method];
+      await runPrMutation(pr, methodLabel, `Branch updated (${message.method.toLowerCase()}): ${pr.title}`, (token) => updatePrBranch(token, pr.id, message.method));
       return;
     }
 

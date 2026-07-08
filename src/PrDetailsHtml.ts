@@ -1,9 +1,14 @@
-import type { IPrDetails, IPrTimelineItem, MergeMethod } from "./types";
+import type { IPrDetails, IPrTimelineItem, MergeMethod, UpdateBranchMethod } from "./types";
 
 export const MERGE_METHOD_LABELS: Record<MergeMethod, string> = {
   SQUASH: "Squash and merge",
   MERGE: "Create a merge commit",
   REBASE: "Rebase and merge",
+};
+
+export const UPDATE_METHOD_LABELS: Record<UpdateBranchMethod, string> = {
+  REBASE: "Update with rebase",
+  MERGE: "Update with merge commit",
 };
 
 const REVIEW_STATE_LABELS: Record<string, string> = {
@@ -321,7 +326,14 @@ function renderMergeBox(details: IPrDetails): string {
 
   const updateBranchRow =
     isOpen && details.isBehindBase
-      ? `<div class="row merge-actions"><span class="neutral">This branch is out-of-date with the base branch</span><button id="update-branch">Update branch</button></div>`
+      ? `<div class="row merge-actions">
+          <span class="neutral">This branch is out-of-date with the base branch</span>
+          <button id="update-branch">Update branch</button>
+          <select id="update-method" aria-label="Update method">
+            <option value="REBASE">${UPDATE_METHOD_LABELS.REBASE}</option>
+            <option value="MERGE">${UPDATE_METHOD_LABELS.MERGE}</option>
+          </select>
+        </div>`
       : "";
 
   const actionButtons: string[] = [];
@@ -443,7 +455,7 @@ export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: num
     wire("approve", () => ({ command: "review", event: "APPROVE", text: composerText.value }));
     wire("merge", () => ({ command: "merge", method: document.getElementById("merge-method").value }));
     wire("ready", () => ({ command: "readyForReview" }));
-    wire("update-branch", () => ({ command: "updateBranch" }));
+    wire("update-branch", () => ({ command: "updateBranch", method: document.getElementById("update-method").value }));
     wire("checkout", () => ({ command: "checkout" }));
 
     function syncComposerButtons() {

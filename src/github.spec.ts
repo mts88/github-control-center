@@ -509,14 +509,14 @@ describe("mutations", () => {
     expect(requestBody.variables).toEqual({ id: "PR_42", method: "SQUASH" });
   });
 
-  it("should post the update-branch mutation with the PR id", async () => {
+  it("should post the update-branch mutation with the PR id and update method", async () => {
     stubFetch({ data: { updatePullRequestBranch: { clientMutationId: null } } });
 
-    await updatePrBranch("token", "PR_42");
+    await updatePrBranch("token", "PR_42", "REBASE");
 
     const requestBody = lastRequestBody();
     expect(requestBody.query).toContain("updatePullRequestBranch");
-    expect(requestBody.variables).toEqual({ id: "PR_42" });
+    expect(requestBody.variables).toEqual({ id: "PR_42", method: "REBASE" });
   });
 
   it("should post the ready-for-review mutation with the PR id", async () => {
