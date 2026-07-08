@@ -17,5 +17,7 @@ CHANGELOG.md
 *.vsix
 .github/
 .githooks/
+.claude/
+docs/
 commitlint.config.mjs
 .releaserc.json
