@@ -14,6 +14,8 @@ export class PrDetailsPanel {
   private panel: vscode.WebviewPanel | undefined;
   private messageHandler: ((message: IPanelMessage) => void) | undefined;
 
+  constructor(private readonly extensionUri: vscode.Uri) {}
+
   onMessage(handler: (message: IPanelMessage) => void): void {
     this.messageHandler = handler;
   }
@@ -27,7 +29,10 @@ export class PrDetailsPanel {
   }
 
   showDetails(details: IPrDetails): void {
-    this.render(`PR #${details.number}`, renderPrDetailsHtml(details, crypto.randomUUID(), Date.now()));
+    const panel = this.ensurePanel(`PR #${details.number}`);
+    const mermaidScriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", "mermaid.min.js")).toString();
+    panel.title = `PR #${details.number}`;
+    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri);
   }
 
   reenableActions(): void {
@@ -49,7 +54,10 @@ export class PrDetailsPanel {
       this.panel.reveal(undefined, true);
       return this.panel;
     }
-    this.panel = vscode.window.createWebviewPanel("githubControlCenter.prDetails", title, vscode.ViewColumn.Active, { enableScripts: true });
+    this.panel = vscode.window.createWebviewPanel("githubControlCenter.prDetails", title, vscode.ViewColumn.Active, {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "dist")],
+    });
     this.panel.onDidDispose(() => {
       this.panel = undefined;
     });

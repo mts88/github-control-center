@@ -47,7 +47,7 @@ End-to-end verification stays manual: press `F5` in VSCode → Extension Develop
 
 ## Architecture
 
-**Zero runtime dependencies** — keep it that way. HTTP uses the native `fetch`; auth uses VSCode's built-in GitHub authentication provider. Only devDeps: typescript, esbuild, @types/*.
+**Zero runtime dependencies** — keep it that way. HTTP uses the native `fetch`; auth uses VSCode's built-in GitHub authentication provider. Only devDeps: typescript, esbuild, @types/*, mermaid. One deliberate exception to "no vendored code": `mermaid` is a devDep whose prebuilt bundle is copied to `dist/mermaid.min.js` by `esbuild.js` and loaded **only inside the webview**, lazily, when a PR body contains a diagram — never a CDN (CSP stays nonce-only, PR content never leaves the machine).
 
 Data flow, one cycle every 150s (`POLL_INTERVAL_MS` in `extension.ts`) plus manual refresh:
 
@@ -72,7 +72,7 @@ Data flow, one cycle every 150s (`POLL_INTERVAL_MS` in `extension.ts`) plus manu
 - `statusCheckRollup` is `null` for repos without CI → mapped to `ciState: "NONE"`, never treated as an error.
 - `activationEvents: ["onStartupFinished"]` is load-bearing: without it, badge and polling only start when the user opens the view.
 - **Details-fetch errors are NOT silent** (unlike the poll loop): they are user-initiated, so they render inside the panel. The poll loop's silence invariant is untouched.
-- **Webview security**: CSP allows scripts only via a per-render nonce — `bodyHtml` values are the only raw-injected content and cannot execute. Webview messages may carry **user-typed text and the chosen merge method only** — never ids or URLs; the extension resolves the current PR itself and validates the merge method against the repo-allowed set.
+- **Webview security**: CSP allows scripts only via a per-render nonce — `bodyHtml` values are the only raw-injected content and cannot execute. GitHub's mermaid sections (`section[data-type="mermaid"]` with the source in `data-json`) are rendered locally by the bundled mermaid (nonce'd script from `localResourceRoots`, `securityLevel: "strict"`); render failure falls back to the plain source, never a broken page. Webview messages may carry **user-typed text and the chosen merge method only** — never ids or URLs; the extension resolves the current PR itself and validates the merge method against the repo-allowed set.
 - **Stale-response guard**: `openPrDetails` uses a request sequence counter — only the latest click may render into the reused panel.
 
 ## Conventions

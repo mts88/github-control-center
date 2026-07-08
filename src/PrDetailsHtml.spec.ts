@@ -54,6 +54,18 @@ function render(overrides: Partial<IPrDetails> = {}): string {
   return renderPrDetailsHtml(buildDetails(overrides), NONCE, NOW);
 }
 
+const MERMAID_URI = "vscode-resource://ext/dist/mermaid.min.js";
+
+// real shape produced by GitHub's bodyHTML for a ```mermaid fence
+const MERMAID_SECTION =
+  '<section class="js-render-needs-enrichment render-needs-enrichment" data-type="mermaid" data-host="https://viewscreen.githubusercontent.com">' +
+  '<div class="js-render-enrichment-target" data-json="{&quot;data&quot;:&quot;flowchart TD\\n  A--&gt;B&quot;}"></div>' +
+  "<span>Loading</span></section>";
+
+function renderWithMermaid(overrides: Partial<IPrDetails> = {}): string {
+  return renderPrDetailsHtml(buildDetails(overrides), NONCE, NOW, MERMAID_URI);
+}
+
 describe("renderPrDetailsHtml", () => {
   it("should escape HTML in interpolated fields so injected markup stays inert", () => {
     const html = render({ title: '<script>alert("boom")</script>' });
@@ -74,6 +86,37 @@ describe("renderPrDetailsHtml", () => {
 
     expect(html).toContain(`script-src 'nonce-${NONCE}'`);
     expect(html).toContain(`<script nonce="${NONCE}">`);
+  });
+
+  describe("mermaid rendering", () => {
+    it("should load the local mermaid bundle with the nonce when the description contains a diagram", () => {
+      const html = renderWithMermaid({ bodyHtml: MERMAID_SECTION });
+
+      expect(html).toContain(`<script nonce="${NONCE}" src="${MERMAID_URI}"></script>`);
+      expect(html).toContain("mermaid.initialize");
+    });
+
+    it("should load the mermaid bundle when only a timeline body contains a diagram", () => {
+      const html = renderWithMermaid({
+        bodyHtml: "<p>plain</p>",
+        timeline: [{ kind: "comment", author: "mario", avatarUrl: "", bodyHtml: MERMAID_SECTION, createdAt: "2026-07-02T00:00:00Z" }],
+      });
+
+      expect(html).toContain(`src="${MERMAID_URI}"`);
+    });
+
+    it("should not load the mermaid bundle when no body contains a diagram", () => {
+      const html = renderWithMermaid();
+
+      expect(html).not.toContain(MERMAID_URI);
+      expect(html).not.toContain("mermaid.initialize");
+    });
+
+    it("should not load the mermaid bundle when no script uri is available", () => {
+      const html = render({ bodyHtml: MERMAID_SECTION });
+
+      expect(html).not.toContain("mermaid.initialize");
+    });
   });
 
   describe("state pill", () => {

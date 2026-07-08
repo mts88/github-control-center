@@ -122,6 +122,8 @@ const BASE_STYLE = `
   }
   .box-body { padding: 12px; overflow-x: auto; }
   .box-body img { max-width: 100%; }
+  .mermaid-diagram { overflow-x: auto; margin: 8px 0; }
+  .mermaid-diagram svg { max-width: 100%; height: auto; }
   .box-body pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 6px; overflow-x: auto; }
   .box-body code { background: var(--vscode-textCodeBlock-background); border-radius: 3px; }
   .review-APPROVED { border-left: 3px solid var(--gr-green); }
@@ -411,9 +413,48 @@ function renderSidebar(details: IPrDetails): string {
   </aside>`;
 }
 
-export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: number): string {
+function renderMermaidSupport(details: IPrDetails, nonce: string, mermaidScriptUri: string | undefined): { scriptTag: string; bootstrap: string } {
+  const bodies = [details.bodyHtml, ...details.timeline.map((item) => item.bodyHtml)];
+  const hasMermaid = bodies.some((html) => html.includes('data-type="mermaid"'));
+  if (!hasMermaid || !mermaidScriptUri) {
+    return { scriptTag: "", bootstrap: "" };
+  }
+  // GitHub ships mermaid sources inside a section rendered by its own site JS; we render them
+  // locally with the bundled mermaid (no CDN: CSP stays nonce-only, PR content never leaves the machine)
+  const bootstrap = `
+    const isDarkTheme = document.body.classList.contains("vscode-dark") || document.body.classList.contains("vscode-high-contrast");
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDarkTheme ? "dark" : "default" });
+    document.querySelectorAll('section[data-type="mermaid"]').forEach(async (mermaidSection, index) => {
+      const enrichmentTarget = mermaidSection.querySelector(".js-render-enrichment-target");
+      const rawJson = enrichmentTarget ? enrichmentTarget.getAttribute("data-json") : null;
+      if (!rawJson) {
+        return;
+      }
+      let source = "";
+      try {
+        source = JSON.parse(rawJson).data;
+      } catch {
+        return;
+      }
+      try {
+        const rendered = await mermaid.render("gccMermaid" + index, source);
+        const container = document.createElement("div");
+        container.className = "mermaid-diagram";
+        container.innerHTML = rendered.svg;
+        mermaidSection.replaceWith(container);
+      } catch {
+        const fallback = document.createElement("pre");
+        fallback.textContent = source;
+        mermaidSection.replaceWith(fallback);
+      }
+    });`;
+  return { scriptTag: `<script nonce="${nonce}" src="${escapeHtml(mermaidScriptUri)}"></script>`, bootstrap };
+}
+
+export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: number, mermaidScriptUri?: string): string {
   const timelineItems = details.timeline.map((item) => renderTimelineItem(item, details.url, now)).join("");
   const olderLink = details.timelineTruncated ? `<a class="older-link" href="${escapeHtml(details.url)}">View older conversation on GitHub</a>` : "";
+  const mermaidSupport = renderMermaidSupport(details, nonce, mermaidScriptUri);
 
   const body = `
   ${renderHeader(details)}
@@ -476,7 +517,8 @@ export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: num
         syncComposerButtons();
       }
     });
+${mermaidSupport.bootstrap}
   </script>`;
 
-  return htmlDocument(nonce, body, script);
+  return htmlDocument(nonce, body, mermaidSupport.scriptTag + script);
 }

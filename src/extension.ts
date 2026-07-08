@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const mineView = vscode.window.createTreeView("githubControlCenter.mine", { treeDataProvider: mineProvider });
   const newPrTracker = new NewPrTracker();
   const reviewDecisionTracker = new ReviewDecisionTracker();
-  const detailsPanel = new PrDetailsPanel();
+  const detailsPanel = new PrDetailsPanel(context.extensionUri);
   let currentDetailsPr: IPullRequest | undefined;
   let currentDetails: IPrDetails | undefined;
   let detailsRequestSequence = 0;
