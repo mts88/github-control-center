@@ -60,7 +60,7 @@ interface IGraphQlPrNode {
 }
 
 const DETAILS_QUERY = `
-  query ($id: ID!) {
+  query ($id: ID!, $headRef: String!) {
     node(id: $id) {
       ... on PullRequest {
         number
@@ -75,7 +75,7 @@ const DETAILS_QUERY = `
         baseRefName
         headRefName
         headRepository { nameWithOwner }
-        mergeStateStatus
+        baseRef { compare(headRef: $headRef) { behindBy } }
         changedFiles
         additions
         deletions
@@ -183,7 +183,7 @@ interface IGraphQlDetailsNode {
   baseRefName: string;
   headRefName: string;
   headRepository: { nameWithOwner: string } | null;
-  mergeStateStatus: string;
+  baseRef: { compare: { behindBy: number } | null } | null;
   changedFiles: number;
   additions: number;
   deletions: number;
@@ -255,8 +255,8 @@ export async function fetchPullRequests(token: string): Promise<IPrSnapshot> {
   };
 }
 
-export async function fetchPrDetails(token: string, prId: string): Promise<IPrDetails> {
-  const data = await postGraphQl<{ node: IGraphQlDetailsNode | null }>(token, DETAILS_QUERY, { id: prId });
+export async function fetchPrDetails(token: string, prId: string, headRefName: string): Promise<IPrDetails> {
+  const data = await postGraphQl<{ node: IGraphQlDetailsNode | null }>(token, DETAILS_QUERY, { id: prId, headRef: headRefName });
   if (!data.node) {
     throw new Error("Pull request not found");
   }
@@ -339,7 +339,8 @@ function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
     baseRefName: node.baseRefName,
     headRefName: node.headRefName,
     headRepo: node.headRepository?.nameWithOwner ?? node.repository.nameWithOwner,
-    isBehindBase: node.mergeStateStatus === "BEHIND",
+    // Ref.compare works without branch protection; mergeStateStatus only reports BEHIND with strict protection
+    isBehindBase: (node.baseRef?.compare?.behindBy ?? 0) > 0,
     commitsCount: node.commits.totalCount,
     changedFiles: node.changedFiles,
     additions: node.additions,

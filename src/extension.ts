@@ -64,7 +64,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     try {
-      const details = await fetchPrDetails(session.accessToken, pr.id);
+      const details = await fetchPrDetails(session.accessToken, pr.id, pr.headRefName);
       if (requestId === detailsRequestSequence) {
         currentDetails = details;
         detailsPanel.showDetails(details);
