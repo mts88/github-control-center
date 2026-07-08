@@ -13,6 +13,7 @@ yarn install      # Yarn 4 via .yarnrc.yml yarnPath — no corepack needed, bina
 yarn build        # Bundle src/extension.ts → dist/extension.js with esbuild
 yarn watch        # esbuild watch mode
 yarn typecheck    # tsc --noEmit (esbuild does not type-check)
+yarn lint         # ESLint flat config (eslint.config.mjs), typescript-eslint
 yarn test         # Vitest, single run
 yarn test:watch   # Vitest watch mode
 ```
