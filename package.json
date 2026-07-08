@@ -2,7 +2,7 @@
   "name": "github-control-center",
   "displayName": "GitHub Control Center",
   "description": "A control center for a developer's daily GitHub activities: PRs to review, your PRs, notifications, and a full PR page inside VSCode",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "publisher": "mts88",
   "private": true,
   "license": "MIT",
