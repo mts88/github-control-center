@@ -122,7 +122,8 @@ const BASE_STYLE = `
   }
   .box-body { padding: 12px; overflow-x: auto; }
   .box-body img { max-width: 100%; }
-  .mermaid-diagram { overflow-x: auto; margin: 8px 0; }
+  .gcc-mermaid { overflow-x: auto; margin: 8px 0; }
+  .gcc-mermaid pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 6px; }
   .mermaid-diagram svg { max-width: 100%; height: auto; }
   .box-body pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 6px; overflow-x: auto; }
   .box-body code { background: var(--vscode-textCodeBlock-background); border-radius: 3px; }
@@ -414,39 +415,68 @@ function renderSidebar(details: IPrDetails): string {
   </aside>`;
 }
 
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/gi, (_match, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
+// GitHub ships each ```mermaid fence as a <section> rendered by its own site JS (dead in a webview).
+// The diagram source in data-json is HTML-encoded TWICE: once for the attribute, once inside the payload.
+// We swap the section for a plain <pre> with the fully decoded source — always readable, even unrendered —
+// and the webview bootstrap upgrades it to an inline SVG.
+function replaceMermaidSections(html: string): string {
+  return html.replace(/<section[^>]*data-type="mermaid"[\s\S]*?<\/section>/g, (section) => {
+    const jsonAttribute = section.match(/data-json="([^"]*)"/);
+    if (!jsonAttribute) {
+      return section;
+    }
+    try {
+      const payload = JSON.parse(decodeHtmlEntities(jsonAttribute[1])) as { data?: string };
+      const source = decodeHtmlEntities(payload.data ?? "");
+      if (!source) {
+        return section;
+      }
+      return `<div class="gcc-mermaid"><pre>${escapeHtml(source)}</pre></div>`;
+    } catch {
+      return section;
+    }
+  });
+}
+
 function renderMermaidSupport(details: IPrDetails, nonce: string, mermaidScriptUri: string | undefined): { scriptTag: string; bootstrap: string } {
   const bodies = [details.bodyHtml, ...details.timeline.map((item) => item.bodyHtml)];
-  const hasMermaid = bodies.some((html) => html.includes('data-type="mermaid"'));
+  const hasMermaid = bodies.some((html) => html.includes('class="gcc-mermaid"'));
   if (!hasMermaid || !mermaidScriptUri) {
     return { scriptTag: "", bootstrap: "" };
   }
-  // GitHub ships mermaid sources inside a section rendered by its own site JS; we render them
-  // locally with the bundled mermaid (no CDN: CSP stays nonce-only, PR content never leaves the machine)
+  // bundled mermaid, loaded lazily from the extension (no CDN: CSP stays nonce-only, PR content stays local)
   const bootstrap = `
     const isDarkTheme = document.body.classList.contains("vscode-dark") || document.body.classList.contains("vscode-high-contrast");
     mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDarkTheme ? "dark" : "default" });
-    document.querySelectorAll('section[data-type="mermaid"]').forEach(async (mermaidSection, index) => {
-      const enrichmentTarget = mermaidSection.querySelector(".js-render-enrichment-target");
-      const rawJson = enrichmentTarget ? enrichmentTarget.getAttribute("data-json") : null;
-      if (!rawJson) {
+    document.querySelectorAll(".gcc-mermaid").forEach(async (container, index) => {
+      const sourceElement = container.querySelector("pre");
+      if (!sourceElement) {
         return;
       }
-      let source = "";
+      const renderId = "gccMermaid" + index;
       try {
-        source = JSON.parse(rawJson).data;
-      } catch {
-        return;
-      }
-      try {
-        const rendered = await mermaid.render("gccMermaid" + index, source);
-        const container = document.createElement("div");
-        container.className = "mermaid-diagram";
+        const rendered = await mermaid.render(renderId, sourceElement.textContent);
         container.innerHTML = rendered.svg;
-        mermaidSection.replaceWith(container);
+        container.classList.add("mermaid-diagram");
       } catch {
-        const fallback = document.createElement("pre");
-        fallback.textContent = source;
-        mermaidSection.replaceWith(fallback);
+        // mermaid leaves its error artwork in the document on failure: remove it, keep the readable source
+        for (const strayId of [renderId, "d" + renderId]) {
+          const strayElement = document.getElementById(strayId);
+          if (strayElement) {
+            strayElement.remove();
+          }
+        }
       }
     });`;
   return { scriptTag: `<script nonce="${nonce}" src="${escapeHtml(mermaidScriptUri)}"></script>`, bootstrap };
@@ -459,23 +489,28 @@ export function renderPrDetailsHtml(
   mermaidScriptUri?: string,
   defaultUpdateMethod: UpdateBranchMethod = "REBASE",
 ): string {
-  const timelineItems = details.timeline.map((item) => renderTimelineItem(item, details.url, now)).join("");
-  const olderLink = details.timelineTruncated ? `<a class="older-link" href="${escapeHtml(details.url)}">View older conversation on GitHub</a>` : "";
-  const mermaidSupport = renderMermaidSupport(details, nonce, mermaidScriptUri);
+  const processedDetails: IPrDetails = {
+    ...details,
+    bodyHtml: replaceMermaidSections(details.bodyHtml),
+    timeline: details.timeline.map((item) => ({ ...item, bodyHtml: replaceMermaidSections(item.bodyHtml) })),
+  };
+  const timelineItems = processedDetails.timeline.map((item) => renderTimelineItem(item, processedDetails.url, now)).join("");
+  const olderLink = processedDetails.timelineTruncated ? `<a class="older-link" href="${escapeHtml(processedDetails.url)}">View older conversation on GitHub</a>` : "";
+  const mermaidSupport = renderMermaidSupport(processedDetails, nonce, mermaidScriptUri);
 
   const body = `
-  ${renderHeader(details)}
+  ${renderHeader(processedDetails)}
   <div class="layout">
     <main>
       <div class="timeline">
-        ${renderDescription(details, now)}
+        ${renderDescription(processedDetails, now)}
         ${timelineItems}
       </div>
       ${olderLink}
-      ${renderMergeBox(details, defaultUpdateMethod)}
-      ${renderComposer(details)}
+      ${renderMergeBox(processedDetails, defaultUpdateMethod)}
+      ${renderComposer(processedDetails)}
     </main>
-    ${renderSidebar(details)}
+    ${renderSidebar(processedDetails)}
   </div>`;
 
   // the script only forwards user-typed text and the chosen merge method — never ids or urls
