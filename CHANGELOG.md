@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/mts88/github-control-center/compare/v1.3.0...v1.4.0) (2026-07-09)
+
+
+### Features
+
+* show linked repository name in PR details header ([#12](https://github.com/mts88/github-control-center/issues/12)) ([dd1d849](https://github.com/mts88/github-control-center/commit/dd1d849a70c9cc4c47331085d630fff6cf3be314))
+
 # [1.3.0](https://github.com/mts88/github-control-center/compare/v1.2.1...v1.3.0) (2026-07-09)
 
 
