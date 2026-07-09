@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/mts88/github-control-center/compare/v1.6.0...v1.6.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* deduplicate same-named check runs in the merge box ([#16](https://github.com/mts88/github-control-center/issues/16)) ([4e05a22](https://github.com/mts88/github-control-center/commit/4e05a22f21e32a253307617c101c010752989250))
+
 # [1.6.0](https://github.com/mts88/github-control-center/compare/v1.5.0...v1.6.0) (2026-07-09)
 
 
