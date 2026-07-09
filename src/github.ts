@@ -649,6 +649,15 @@ function isSameRepoPr(node: IGraphQlDetailsNode): boolean {
 
 function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
   const contexts = node.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
+  // GitHub attaches one CheckRun per workflow run, so re-triggered workflows (e.g. pull_request_target
+  // on edited) duplicate same-named checks on the same commit. Like the GitHub UI, keep only the
+  // latest run per name (nodes arrive in creation order).
+  const latestCheckByName = new Map<string, IPrCheck>();
+  const rawChecks = (contexts?.nodes ?? []).map(toCheck).filter((check): check is IPrCheck => Boolean(check));
+  for (const check of rawChecks) {
+    latestCheckByName.set(check.name, check);
+  }
+  const checks = [...latestCheckByName.values()];
   return {
     number: node.number,
     title: node.title,
@@ -677,8 +686,9 @@ function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
     reviewDecision: node.reviewDecision,
     viewerDidAuthor: node.viewerDidAuthor,
     reviewers: toReviewers(node),
-    checks: (contexts?.nodes ?? []).map(toCheck).filter((check): check is IPrCheck => Boolean(check)),
-    checksTotal: contexts?.totalCount ?? 0,
+    checks,
+    // Subtract the collapsed duplicates so the "N more checks" hint only counts nodes beyond the fetch cap.
+    checksTotal: (contexts?.totalCount ?? 0) - (rawChecks.length - checks.length),
     timeline: toTimeline(node),
     timelineTruncated: node.comments.totalCount > node.comments.nodes.length || node.reviews.totalCount > node.reviews.nodes.length,
   };
