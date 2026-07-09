@@ -18,7 +18,10 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # deploy key: the branch ruleset on main blocks GITHUB_TOKEN pushes (GitHub Actions
+          # cannot be a bypass actor on personal repos) — deploy keys can, so the release
+          # commit is pushed over SSH with this key
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - uses: actions/setup-node@v5
         with:
           node-version-file: .nvmrc
