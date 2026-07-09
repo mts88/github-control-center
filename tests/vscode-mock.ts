@@ -4,10 +4,18 @@ export enum TreeItemCollapsibleState {
   Expanded = 2,
 }
 
+export enum TreeItemCheckboxState {
+  Unchecked = 0,
+  Checked = 1,
+}
+
 export class TreeItem {
+  id?: string;
   description?: string;
   iconPath?: unknown;
   tooltip?: string;
+  contextValue?: string;
+  checkboxState?: TreeItemCheckboxState;
   command?: { command: string; title: string; arguments?: unknown[] };
 
   constructor(
@@ -43,6 +51,28 @@ export class EventEmitter<TEvent> {
     for (const listener of this.listeners) {
       listener(event);
     }
+  }
+}
+
+interface IUriParts {
+  scheme: string;
+  path: string;
+  query?: string;
+}
+
+export class Uri {
+  private constructor(
+    public readonly scheme: string,
+    public readonly path: string,
+    public readonly query: string,
+  ) {}
+
+  static from(parts: IUriParts): Uri {
+    return new Uri(parts.scheme, parts.path, parts.query ?? "");
+  }
+
+  toString(): string {
+    return `${this.scheme}:${this.path}${this.query ? `?${this.query}` : ""}`;
   }
 }
 

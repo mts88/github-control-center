@@ -1,5 +1,26 @@
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
-import { addPrComment, fetchPrDetails, fetchPullRequests, markPrReadyForReview, mergePr, searchRepositories, submitPrReview, updatePrBranch } from "./github";
+import {
+  addPendingReview,
+  addPrComment,
+  addReviewThread,
+  addReviewThreadReply,
+  discardPendingReview,
+  fetchFileContent,
+  fetchPrDetails,
+  fetchPrFilePatches,
+  fetchPrFiles,
+  fetchPullRequests,
+  fetchReviewThreads,
+  markPrReadyForReview,
+  mergePr,
+  resolveThread,
+  searchRepositories,
+  setFileViewed,
+  submitPendingReview,
+  submitPrReview,
+  unresolveThread,
+  updatePrBranch,
+} from "./github";
 
 interface IGraphQlNodeOverrides {
   id?: string;
@@ -20,6 +41,8 @@ function buildNode(overrides: IGraphQlNodeOverrides = {}) {
     createdAt: "2026-07-01T00:00:00Z",
     reviewDecision: overrides.reviewDecision ?? null,
     headRefName: "feature/thing",
+    baseRefOid: "base-oid",
+    headRefOid: "head-oid",
     author: overrides.author === undefined ? { login: "jane" } : overrides.author,
     repository: { nameWithOwner: "acme/repo" },
     commits: {
@@ -67,6 +90,8 @@ describe("fetchPullRequests", () => {
         ciState: "SUCCESS",
         reviewDecision: "APPROVED",
         headRefName: "feature/thing",
+        baseRefOid: "base-oid",
+        headRefOid: "head-oid",
       },
     ]);
   });
@@ -453,6 +478,431 @@ describe("fetchPrDetails", () => {
     stubFetch({ data: { node: null } });
 
     await expect(fetchPrDetails("token", "PR_42", "feature/thing")).rejects.toThrow("Pull request not found");
+  });
+});
+
+describe("fetchPrFiles", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
+  function buildFilesPage(nodes: unknown[], endCursor: string | null = null) {
+    return {
+      data: {
+        node: {
+          files: {
+            nodes,
+            pageInfo: { hasNextPage: endCursor !== null, endCursor },
+          },
+        },
+      },
+    };
+  }
+
+  const fileNode = {
+    path: "src/app.ts",
+    additions: 10,
+    deletions: 2,
+    changeType: "MODIFIED",
+    viewerViewedState: "UNVIEWED",
+  };
+
+  it("should send a node query with the pull request id and map the files", async () => {
+    stubFetch(buildFilesPage([fileNode]));
+
+    const files = await fetchPrFiles("token", "PR_42");
+
+    const requestBody = JSON.parse((fetch as Mock).mock.calls[0][1].body as string);
+    expect(requestBody.query).toContain("files(");
+    expect(requestBody.variables).toEqual({ id: "PR_42", after: null });
+    expect(files).toEqual([
+      { path: "src/app.ts", additions: 10, deletions: 2, changeType: "MODIFIED", viewedState: "UNVIEWED" },
+    ]);
+  });
+
+  it("should follow pagination with the end cursor", async () => {
+    const firstPage = buildFilesPage([fileNode], "CURSOR_1");
+    const secondPage = buildFilesPage([{ ...fileNode, path: "src/other.ts" }]);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => firstPage })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => secondPage });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const files = await fetchPrFiles("token", "PR_42");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(secondBody.variables).toEqual({ id: "PR_42", after: "CURSOR_1" });
+    expect(files.map((file) => file.path)).toEqual(["src/app.ts", "src/other.ts"]);
+  });
+
+  it("should throw when the pull request node is not found", async () => {
+    stubFetch({ data: { node: null } });
+
+    await expect(fetchPrFiles("token", "PR_42")).rejects.toThrow("Pull request not found");
+  });
+});
+
+describe("fetchPrFilePatches", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
+  const restFile = {
+    filename: "src/app.ts",
+    status: "modified",
+    additions: 10,
+    deletions: 2,
+    patch: "@@ -1,2 +1,3 @@",
+  };
+
+  function stubRestPages(...pages: unknown[][]): Mock {
+    const fetchMock = vi.fn();
+    for (const page of pages) {
+      fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => page });
+    }
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("should call the pulls files endpoint with per_page 100 and the token header", async () => {
+    const fetchMock = stubRestPages([restFile]);
+
+    await fetchPrFilePatches("token", "acme/repo", 42);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.github.com/repos/acme/repo/pulls/42/files?per_page=100&page=1");
+    expect(init.headers.Authorization).toBe("Bearer token");
+  });
+
+  it("should map previous_filename to previousPath and keep patch undefined when absent", async () => {
+    stubRestPages([
+      { filename: "src/renamed.ts", previous_filename: "src/old.ts", patch: "@@ -1 +1 @@" },
+      { filename: "assets/logo.png" },
+    ]);
+
+    const patches = await fetchPrFilePatches("token", "acme/repo", 42);
+
+    expect(patches).toEqual([
+      { path: "src/renamed.ts", previousPath: "src/old.ts", patch: "@@ -1 +1 @@" },
+      { path: "assets/logo.png", previousPath: undefined, patch: undefined },
+    ]);
+  });
+
+  it("should follow pagination while a full page is returned", async () => {
+    const fullPage = Array.from({ length: 100 }, (unused, fileIndex) => ({ ...restFile, filename: `src/file${fileIndex}.ts` }));
+    const fetchMock = stubRestPages(fullPage, [restFile]);
+
+    const patches = await fetchPrFilePatches("token", "acme/repo", 42);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toContain("page=2");
+    expect(patches).toHaveLength(101);
+  });
+
+  it("should throw on a non-ok response", async () => {
+    stubFetch({}, 404);
+
+    await expect(fetchPrFilePatches("token", "acme/repo", 42)).rejects.toThrow("404");
+  });
+});
+
+describe("fetchFileContent", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
+  it("should request the contents endpoint with the raw media type and return the body text", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => "file body" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const content = await fetchFileContent("token", "acme/repo", "src/nested/app.ts", "abc123");
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string> }];
+    expect(url).toBe("https://api.github.com/repos/acme/repo/contents/src/nested/app.ts?ref=abc123");
+    expect(init.headers.Accept).toBe("application/vnd.github.raw+json");
+    expect(content).toBe("file body");
+  });
+
+  it("should escape special characters in the file path", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => "" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchFileContent("token", "acme/repo", "docs/my file #1.md", "abc123");
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toBe("https://api.github.com/repos/acme/repo/contents/docs/my%20file%20%231.md?ref=abc123");
+  });
+
+  it("should throw on a non-ok response", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 404, text: async () => "" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchFileContent("token", "acme/repo", "src/app.ts", "abc123")).rejects.toThrow("404");
+  });
+});
+
+describe("fetchReviewThreads", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
+  interface IThreadsPayloadOptions {
+    threads?: unknown[];
+    pendingReviews?: unknown[];
+    viewerLogin?: string;
+  }
+
+  function stubThreadsPayload(options: IThreadsPayloadOptions = {}): void {
+    stubFetch({
+      data: {
+        viewer: { login: options.viewerLogin ?? "me" },
+        node: {
+          reviewThreads: { nodes: options.threads ?? [] },
+          reviews: { nodes: options.pendingReviews ?? [] },
+        },
+      },
+    });
+  }
+
+  const graphQlThread = {
+    id: "RT_1",
+    path: "src/app.ts",
+    line: 10,
+    startLine: null,
+    diffSide: "RIGHT",
+    startDiffSide: null,
+    isResolved: false,
+    isOutdated: false,
+    subjectType: "LINE",
+    comments: {
+      nodes: [{ id: "C_1", author: { login: "jane" }, body: "Fix this", createdAt: "2026-07-01T00:00:00Z", state: "SUBMITTED" }],
+    },
+  };
+
+  it("should map review threads with comments and pending flags", async () => {
+    stubThreadsPayload({
+      threads: [
+        {
+          ...graphQlThread,
+          comments: { nodes: [...graphQlThread.comments.nodes, { id: "C_2", author: null, body: "draft", createdAt: "2026-07-02T00:00:00Z", state: "PENDING" }] },
+        },
+      ],
+    });
+
+    const snapshot = await fetchReviewThreads("token", "PR_42");
+
+    expect(snapshot.threads).toEqual([
+      {
+        id: "RT_1",
+        path: "src/app.ts",
+        line: 10,
+        startLine: null,
+        side: "RIGHT",
+        startSide: null,
+        isResolved: false,
+        isOutdated: false,
+        subjectType: "LINE",
+        comments: [
+          { id: "C_1", author: "jane", bodyMarkdown: "Fix this", createdAt: "2026-07-01T00:00:00Z", isPending: false },
+          { id: "C_2", author: "unknown", bodyMarkdown: "draft", createdAt: "2026-07-02T00:00:00Z", isPending: true },
+        ],
+      },
+    ]);
+  });
+
+  it("should expose the viewer pending review id and comment count", async () => {
+    stubThreadsPayload({
+      pendingReviews: [{ id: "REV_9", author: { login: "me" }, comments: { totalCount: 3 } }],
+    });
+
+    const snapshot = await fetchReviewThreads("token", "PR_42");
+
+    expect(snapshot.pendingReviewId).toBe("REV_9");
+    expect(snapshot.pendingCommentCount).toBe(3);
+  });
+
+  it("should ignore pending reviews from other users", async () => {
+    stubThreadsPayload({
+      pendingReviews: [{ id: "REV_OTHER", author: { login: "someone-else" }, comments: { totalCount: 5 } }],
+    });
+
+    const snapshot = await fetchReviewThreads("token", "PR_42");
+
+    expect(snapshot.pendingReviewId).toBeNull();
+    expect(snapshot.pendingCommentCount).toBe(0);
+  });
+
+  it("should return a null pending review when none exists", async () => {
+    stubThreadsPayload();
+
+    const snapshot = await fetchReviewThreads("token", "PR_42");
+
+    expect(snapshot.pendingReviewId).toBeNull();
+  });
+
+  it("should throw when the pull request node is not found", async () => {
+    stubFetch({ data: { viewer: { login: "me" }, node: null } });
+
+    await expect(fetchReviewThreads("token", "PR_42")).rejects.toThrow("Pull request not found");
+  });
+});
+
+describe("thread mutations", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
+  function lastRequestBody(): { query: string; variables: Record<string, unknown> } {
+    return JSON.parse((fetch as Mock).mock.calls[0][1].body as string);
+  }
+
+  it("should send resolveReviewThread with the thread id", async () => {
+    stubFetch({ data: { resolveReviewThread: { clientMutationId: null } } });
+
+    await resolveThread("token", "RT_1");
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("resolveReviewThread");
+    expect(requestBody.variables).toEqual({ id: "RT_1" });
+  });
+
+  it("should send unresolveReviewThread with the thread id", async () => {
+    stubFetch({ data: { unresolveReviewThread: { clientMutationId: null } } });
+
+    await unresolveThread("token", "RT_1");
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("unresolveReviewThread");
+    expect(requestBody.variables).toEqual({ id: "RT_1" });
+  });
+});
+
+describe("review mutations", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
+  function lastRequestBody(): { query: string; variables: Record<string, unknown> } {
+    return JSON.parse((fetch as Mock).mock.calls[0][1].body as string);
+  }
+
+  it("should send addPullRequestReview without an event and return the pending review id", async () => {
+    stubFetch({ data: { addPullRequestReview: { pullRequestReview: { id: "REV_9" } } } });
+
+    const reviewId = await addPendingReview("token", "PR_42");
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("addPullRequestReview");
+    expect(requestBody.query).not.toContain("$event");
+    expect(requestBody.variables).toEqual({ id: "PR_42" });
+    expect(reviewId).toBe("REV_9");
+  });
+
+  it("should send a LINE thread with line, side and body", async () => {
+    stubFetch({ data: { addPullRequestReviewThread: { clientMutationId: null } } });
+
+    await addReviewThread("token", { prId: "PR_42", body: "Fix this", path: "src/app.ts", subjectType: "LINE", line: 10, side: "RIGHT" });
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("addPullRequestReviewThread");
+    expect(requestBody.variables).toEqual({
+      input: { pullRequestId: "PR_42", body: "Fix this", path: "src/app.ts", subjectType: "LINE", line: 10, side: "RIGHT" },
+    });
+  });
+
+  it("should send startLine and startSide for a multi-line thread", async () => {
+    stubFetch({ data: { addPullRequestReviewThread: { clientMutationId: null } } });
+
+    await addReviewThread("token", {
+      prId: "PR_42",
+      body: "Span",
+      path: "src/app.ts",
+      subjectType: "LINE",
+      line: 7,
+      startLine: 4,
+      side: "RIGHT",
+      startSide: "RIGHT",
+    });
+
+    expect(lastRequestBody().variables).toEqual({
+      input: { pullRequestId: "PR_42", body: "Span", path: "src/app.ts", subjectType: "LINE", line: 7, startLine: 4, side: "RIGHT", startSide: "RIGHT" },
+    });
+  });
+
+  it("should send a FILE thread without line fields", async () => {
+    stubFetch({ data: { addPullRequestReviewThread: { clientMutationId: null } } });
+
+    await addReviewThread("token", { prId: "PR_42", body: "Whole file", path: "src/app.ts", subjectType: "FILE" });
+
+    expect(lastRequestBody().variables).toEqual({
+      input: { pullRequestId: "PR_42", body: "Whole file", path: "src/app.ts", subjectType: "FILE" },
+    });
+  });
+
+  it("should send a reply with the thread id and body", async () => {
+    stubFetch({ data: { addPullRequestReviewThreadReply: { clientMutationId: null } } });
+
+    await addReviewThreadReply("token", "RT_1", "Agreed");
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("addPullRequestReviewThreadReply");
+    expect(requestBody.variables).toEqual({ threadId: "RT_1", body: "Agreed" });
+  });
+
+  it("should submit the pending review with the event and body", async () => {
+    stubFetch({ data: { submitPullRequestReview: { clientMutationId: null } } });
+
+    await submitPendingReview("token", "PR_42", "REQUEST_CHANGES", "Please fix");
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("submitPullRequestReview");
+    expect(requestBody.variables).toEqual({ id: "PR_42", event: "REQUEST_CHANGES", body: "Please fix" });
+  });
+
+  it("should submit with a null body when empty", async () => {
+    stubFetch({ data: { submitPullRequestReview: { clientMutationId: null } } });
+
+    await submitPendingReview("token", "PR_42", "COMMENT", "");
+
+    expect(lastRequestBody().variables).toEqual({ id: "PR_42", event: "COMMENT", body: null });
+  });
+
+  it("should send markFileAsViewed when marking a file viewed", async () => {
+    stubFetch({ data: { markFileAsViewed: { clientMutationId: null } } });
+
+    await setFileViewed("token", "PR_42", "src/app.ts", true);
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("markFileAsViewed");
+    expect(requestBody.variables).toEqual({ id: "PR_42", path: "src/app.ts" });
+  });
+
+  it("should send unmarkFileAsViewed when marking a file unviewed", async () => {
+    stubFetch({ data: { unmarkFileAsViewed: { clientMutationId: null } } });
+
+    await setFileViewed("token", "PR_42", "src/app.ts", false);
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("unmarkFileAsViewed");
+    expect(requestBody.variables).toEqual({ id: "PR_42", path: "src/app.ts" });
+  });
+
+  it("should discard the pending review by id", async () => {
+    stubFetch({ data: { deletePullRequestReview: { clientMutationId: null } } });
+
+    await discardPendingReview("token", "REV_9");
+
+    const requestBody = lastRequestBody();
+    expect(requestBody.query).toContain("deletePullRequestReview");
+    expect(requestBody.variables).toEqual({ reviewId: "REV_9" });
   });
 });
 
