@@ -14,6 +14,12 @@ interface IPrNode {
 
 export type TreeNode = IRepoNode | IPrNode;
 
+const REVIEW_GLYPHS: Record<string, string> = {
+  APPROVED: "✓",
+  CHANGES_REQUESTED: "✗",
+  REVIEW_REQUIRED: "●",
+};
+
 const CI_ICONS: Record<CiState, vscode.ThemeIcon> = {
   SUCCESS: new vscode.ThemeIcon("pass", new vscode.ThemeColor("testing.iconPassed")),
   FAILURE: new vscode.ThemeIcon("error", new vscode.ThemeColor("testing.iconFailed")),
@@ -73,10 +79,12 @@ function groupByRepo(prs: IPullRequest[]): IRepoNode[] {
 }
 
 function toPrTreeItem(pr: IPullRequest): vscode.TreeItem {
-  const item = new vscode.TreeItem(pr.title, vscode.TreeItemCollapsibleState.None);
+  const reviewGlyph = pr.reviewDecision ? REVIEW_GLYPHS[pr.reviewDecision] : undefined;
+  const label = reviewGlyph ? `${reviewGlyph} ${pr.title}` : pr.title;
+  const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
   item.description = `${pr.author} · ${formatAge(pr.createdAt)}`;
   item.iconPath = pr.isDraft ? new vscode.ThemeIcon("git-pull-request-draft") : CI_ICONS[pr.ciState];
-  item.tooltip = `${pr.repo}\n${pr.title}\nby ${pr.author}${pr.isDraft ? " · draft" : ""}\nCI: ${pr.ciState}`;
+  item.tooltip = `${pr.repo}\n${pr.title}\nby ${pr.author}${pr.isDraft ? " · draft" : ""}\nCI: ${pr.ciState}${pr.reviewDecision ? `\nReview: ${pr.reviewDecision}` : ""}`;
   item.contextValue = "pr";
   item.command = {
     command: "githubControlCenter.openPrDetails",
