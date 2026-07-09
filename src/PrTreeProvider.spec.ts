@@ -9,6 +9,7 @@ interface IPrOverrides {
   isDraft?: boolean;
   ciState?: CiState;
   createdAt?: string;
+  reviewDecision?: string | null;
 }
 
 function buildPr(overrides: IPrOverrides = {}): IPullRequest {
@@ -21,7 +22,7 @@ function buildPr(overrides: IPrOverrides = {}): IPullRequest {
     isDraft: overrides.isDraft ?? false,
     createdAt: overrides.createdAt ?? "2026-07-01T00:00:00Z",
     ciState: overrides.ciState ?? "NONE",
-    reviewDecision: null,
+    reviewDecision: overrides.reviewDecision ?? null,
     headRefName: "feature/thing",
   };
 }
@@ -107,6 +108,24 @@ describe("PrTreeProvider", () => {
       const item = getPrTreeItem(buildPr({ ciState: ciState as CiState }));
 
       expect((item.iconPath as vscode.ThemeIcon).id).toBe(expectedIconId);
+    });
+
+    it.each([
+      ["APPROVED", "✓ A title"],
+      ["CHANGES_REQUESTED", "✗ A title"],
+      ["REVIEW_REQUIRED", "● A title"],
+    ])("should prefix the label with the %s review glyph", (reviewDecision, expectedLabel) => {
+      const item = getPrTreeItem(buildPr({ reviewDecision }));
+
+      expect(item.label).toBe(expectedLabel);
+      expect(item.tooltip).toContain(`Review: ${reviewDecision}`);
+    });
+
+    it("should render a plain label without a review line when there is no review decision", () => {
+      const item = getPrTreeItem(buildPr({ reviewDecision: null }));
+
+      expect(item.label).toBe("A title");
+      expect(item.tooltip).not.toContain("Review:");
     });
 
     describe("age in the description", () => {
