@@ -1,12 +1,37 @@
 import * as vscode from "vscode";
-import { addPrComment, fetchPrDetails, fetchPullRequests, getSession, markPrReadyForReview, mergePr, searchRepositories, submitPrReview, updatePrBranch } from "./github";
+import {
+  addPrComment,
+  fetchFileContent,
+  fetchPrDetails,
+  fetchPrFilePatches,
+  fetchPrFiles,
+  fetchPullRequests,
+  getSession,
+  addReviewThread,
+  addReviewThreadReply,
+  discardPendingReview,
+  markPrReadyForReview,
+  mergePr,
+  resolveThread,
+  searchRepositories,
+  setFileViewed,
+  submitPendingReview,
+  submitPrReview,
+  unresolveThread,
+  updatePrBranch,
+} from "./github";
+import { ReviewController, type IPatchKey } from "./ReviewController";
+import { toThreadPosition } from "./reviewThreads";
 import { isRepoMuted } from "./muting";
 import { NewPrTracker } from "./NewPrTracker";
+import { OidCache } from "./OidCache";
+import { PrContentProvider, fromPrUri, toPrUri } from "./PrContentProvider";
 import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
 import { formatPrTabTitle, PrDetailsPanel, type IPanelMessage } from "./PrDetailsPanel";
-import { PrTreeProvider, type TreeNode } from "./PrTreeProvider";
+import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./PrTreeProvider";
+import { PR_URI_SCHEME } from "./prUri";
 import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
-import type { IPrDetails, IPrSnapshot, IPullRequest } from "./types";
+import type { IPrDetails, IPrFile, IPrFilePatch, IPrSnapshot, IPullRequest } from "./types";
 
 const POLL_INTERVAL_MS = 150_000;
 
@@ -29,10 +54,257 @@ interface IGitExtension {
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("GitHub Control Center");
-  const toReviewProvider = new PrTreeProvider();
-  const mineProvider = new PrTreeProvider();
+  const fileListCache = new OidCache<IPrFile[]>();
+  const patchCache = new OidCache<Map<string, IPrFilePatch>>();
+
+  async function requireToken(): Promise<string> {
+    const session = await getSession(false);
+    if (!session) {
+      throw new Error("Sign in to GitHub first");
+    }
+    return session.accessToken;
+  }
+
+  async function loadPrFiles(pr: IPullRequest): Promise<IPrFile[]> {
+    const cached = fileListCache.get(pr.id, pr.headRefOid);
+    if (cached) {
+      return cached;
+    }
+    const files = await fetchPrFiles(await requireToken(), pr.id);
+    fileListCache.set(pr.id, pr.headRefOid, files);
+    return files;
+  }
+
+  async function ensurePatches(key: IPatchKey): Promise<Map<string, IPrFilePatch>> {
+    const cached = patchCache.get(key.id, key.headRefOid);
+    if (cached) {
+      return cached;
+    }
+    const patches = await fetchPrFilePatches(await requireToken(), key.repo, key.number);
+    const patchesByPath = new Map(patches.map((patch) => [patch.path, patch]));
+    patchCache.set(key.id, key.headRefOid, patchesByPath);
+    return patchesByPath;
+  }
+
+  async function findPatch(key: IPatchKey, path: string): Promise<IPrFilePatch | undefined> {
+    const patches = await ensurePatches(key);
+    // LEFT-side documents of renamed files carry the pre-rename path
+    return patches.get(path) ?? [...patches.values()].find((patch) => patch.previousPath === path);
+  }
+
+  const contentProvider = new PrContentProvider(async (ref) => fetchFileContent(await requireToken(), ref.repo, ref.path, ref.sha));
+
+  const pendingStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+
+  function updatePendingStatusBar(pr: IPullRequest | undefined, count: number): void {
+    if (!pr || count === 0) {
+      pendingStatusBar.hide();
+      return;
+    }
+    pendingStatusBar.text = `$(comment-draft) PR #${pr.number}: ${count} pending`;
+    pendingStatusBar.tooltip = `Pending review on ${pr.repo}#${pr.number} — click to submit`;
+    pendingStatusBar.command = "githubControlCenter.review.submit";
+    pendingStatusBar.show();
+  }
+
+  const REVIEW_EVENT_LABELS: Record<string, "COMMENT" | "APPROVE" | "REQUEST_CHANGES"> = {
+    Comment: "COMMENT",
+    Approve: "APPROVE",
+    "Request changes": "REQUEST_CHANGES",
+  };
+
+  async function submitActiveReview(): Promise<void> {
+    const pr = reviewController.getActivePr();
+    if (!pr || reviewController.getPendingReviewId(pr.id) === null) {
+      void vscode.window.showInformationMessage("No pending review to submit.");
+      return;
+    }
+    const pickedLabel = await vscode.window.showQuickPick(Object.keys(REVIEW_EVENT_LABELS), {
+      placeHolder: `Submit your review of ${pr.repo}#${pr.number}`,
+    });
+    if (!pickedLabel) {
+      return;
+    }
+    const event = REVIEW_EVENT_LABELS[pickedLabel];
+    const body = await vscode.window.showInputBox({
+      prompt: event === "REQUEST_CHANGES" ? "Review summary (required to request changes)" : "Review summary (optional)",
+      placeHolder: "Leave a summary comment…",
+    });
+    if (body === undefined) {
+      return;
+    }
+    // GitHub rule: a changes request must carry a body (same gate as the details panel composer)
+    if (event === "REQUEST_CHANGES" && !body.trim()) {
+      void vscode.window.showWarningMessage("Request changes requires a summary comment.");
+      return;
+    }
+    try {
+      await submitPendingReview(await requireToken(), pr.id, event, body.trim());
+      void vscode.window.showInformationMessage(`Review submitted on ${pr.repo}#${pr.number}`);
+      await reviewController.reload(pr);
+      void refresh();
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Submitting the review failed: ${toErrorMessage(error)}`);
+    }
+  }
+
+  async function discardActiveReview(): Promise<void> {
+    const pr = reviewController.getActivePr();
+    const pendingReviewId = pr ? reviewController.getPendingReviewId(pr.id) : null;
+    if (!pr || pendingReviewId === null) {
+      void vscode.window.showInformationMessage("No pending review to discard.");
+      return;
+    }
+    const confirmed = await vscode.window.showWarningMessage(
+      `Discard your pending review on ${pr.repo}#${pr.number}? All draft comments will be lost.`,
+      { modal: true },
+      "Discard",
+    );
+    if (confirmed !== "Discard") {
+      return;
+    }
+    try {
+      await discardPendingReview(await requireToken(), pendingReviewId);
+      await reviewController.reload(pr);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Discarding the review failed: ${toErrorMessage(error)}`);
+    }
+  }
+
+  const reviewController = new ReviewController({
+    getToken: requireToken,
+    getPatch: findPatch,
+    onPendingChanged: (pr, count) => {
+      void vscode.commands.executeCommand("setContext", "githubControlCenter.hasPendingReview", Boolean(pr));
+      updatePendingStatusBar(pr, count);
+    },
+  });
+
+  async function handleAddComment(reply: vscode.CommentReply, postImmediately: boolean): Promise<void> {
+    const commentText = reply.text.trim();
+    if (!commentText) {
+      return;
+    }
+    const thread = reply.thread;
+    const existingRef = reviewController.threadRef(thread);
+    try {
+      const token = await requireToken();
+      if (existingRef) {
+        // GitHub semantics: a reply joins the viewer's pending review when one exists
+        const pr = reviewController.getPr(existingRef.prId);
+        await addReviewThreadReply(token, existingRef.threadId, commentText);
+        if (pr) {
+          await reviewController.reload(pr);
+        }
+        return;
+      }
+      const fileRef = fromPrUri(thread.uri);
+      const pr = reviewController.getPr(fileRef.prId);
+      if (!pr) {
+        return;
+      }
+      const hasPendingReview = reviewController.getPendingReviewId(pr.id) !== null;
+      if (postImmediately && hasPendingReview) {
+        void vscode.window.showWarningMessage("You have a pending review on this PR — submit or discard it before posting single comments.");
+        return;
+      }
+      // renamed LEFT documents carry the old path; GitHub threads always address the head path
+      const patch = await findPatch(pr, fileRef.path);
+      const headPath = patch?.path ?? fileRef.path;
+      const position = toThreadPosition(fileRef.side, thread.range?.start.line ?? 0, thread.range?.end.line ?? 0, thread.range === undefined);
+      await addReviewThread(token, { prId: pr.id, body: commentText, path: headPath, ...position });
+      if (postImmediately) {
+        await submitPendingReview(token, pr.id, "COMMENT", "");
+      }
+      // drop the gutter placeholder: the server truth rematerializes on reload
+      thread.dispose();
+      await reviewController.reload(pr);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Adding the comment failed: ${toErrorMessage(error)}`);
+    }
+  }
+
+  async function runThreadMutation(thread: vscode.CommentThread, actionLabel: string, mutate: (token: string, threadId: string) => Promise<void>): Promise<void> {
+    const ref = reviewController.threadRef(thread);
+    const pr = ref && reviewController.getPr(ref.prId);
+    if (!ref || !pr) {
+      return;
+    }
+    try {
+      await mutate(await requireToken(), ref.threadId);
+      await reviewController.reload(pr);
+    } catch (error) {
+      void vscode.window.showErrorMessage(`${actionLabel} failed: ${toErrorMessage(error)}`);
+    }
+  }
+
+  async function openFileDiff(node: IFileNode): Promise<void> {
+    const { pr, file } = node;
+    try {
+      reviewController.registerPr(pr);
+      // fire-and-forget: threads appear shortly after the diff opens; failures land in the output channel
+      reviewController.ensureThreadsForPr(pr).catch((error: unknown) => {
+        output.appendLine(`[${new Date().toISOString()}] Review threads load failed: ${toErrorMessage(error)}`);
+      });
+      // patches must arrive before the URIs: renames need previous_filename for the LEFT path
+      const patches = await ensurePatches(pr);
+      const previousPath = patches.get(file.path)?.previousPath;
+      const shared = { prId: pr.id, repo: pr.repo, prNumber: pr.number, headOid: pr.headRefOid };
+      const leftUri = toPrUri({
+        ...shared,
+        path: previousPath ?? file.path,
+        sha: pr.baseRefOid,
+        side: "LEFT",
+        isEmpty: file.changeType === "ADDED",
+      });
+      const rightUri = toPrUri({
+        ...shared,
+        path: file.path,
+        sha: pr.headRefOid,
+        side: "RIGHT",
+        isEmpty: file.changeType === "DELETED",
+      });
+      const basename = file.path.slice(file.path.lastIndexOf("/") + 1);
+      await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, `${basename} (PR #${pr.number})`, { preview: true });
+    } catch (error) {
+      void vscode.window.showErrorMessage(`Failed to open the diff: ${toErrorMessage(error)}`);
+    }
+  }
+
+  function getFilesLayout(): FilesLayout {
+    return vscode.workspace.getConfiguration("githubControlCenter").get<FilesLayout>("files.layout", "tree");
+  }
+
+  function publishFilesLayoutContext(): void {
+    void vscode.commands.executeCommand("setContext", "githubControlCenter.filesLayout", getFilesLayout());
+  }
+
+  const toReviewProvider = new PrTreeProvider(loadPrFiles, getFilesLayout);
+  const mineProvider = new PrTreeProvider(loadPrFiles, getFilesLayout);
   const toReviewView = vscode.window.createTreeView("githubControlCenter.toReview", { treeDataProvider: toReviewProvider });
   const mineView = vscode.window.createTreeView("githubControlCenter.mine", { treeDataProvider: mineProvider });
+
+  function handleCheckboxChange(event: vscode.TreeCheckboxChangeEvent<TreeNode>): void {
+    for (const [node, checkboxState] of event.items) {
+      if (node.kind !== "file") {
+        continue;
+      }
+      const viewed = checkboxState === vscode.TreeItemCheckboxState.Checked;
+      const previousState = node.file.viewedState;
+      // optimistic: node.file is the same object held by the oid cache, so the state survives tree refreshes
+      node.file.viewedState = viewed ? "VIEWED" : "UNVIEWED";
+      void (async () => {
+        try {
+          await setFileViewed(await requireToken(), node.pr.id, node.file.path, viewed);
+        } catch (error) {
+          node.file.viewedState = previousState;
+          toReviewProvider.refresh();
+          mineProvider.refresh();
+          void vscode.window.showErrorMessage(`Updating the viewed state failed: ${toErrorMessage(error)}`);
+        }
+      })();
+    }
+  }
   const newPrTracker = new NewPrTracker();
   const reviewDecisionTracker = new ReviewDecisionTracker();
   const detailsPanel = new PrDetailsPanel(context.extensionUri);
@@ -421,6 +693,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("githubControlCenter.manageMutedRepos", manageMutedRepos),
     vscode.commands.registerCommand("githubControlCenter.openPrDetails", (pr: IPullRequest) => void openPrDetails(pr)),
+    vscode.workspace.registerTextDocumentContentProvider(PR_URI_SCHEME, contentProvider),
+    vscode.commands.registerCommand("githubControlCenter.openFileDiff", (node: IFileNode) => void openFileDiff(node)),
+    vscode.commands.registerCommand("githubControlCenter.review.resolveThread", (thread: vscode.CommentThread) => void runThreadMutation(thread, "Resolve conversation", resolveThread)),
+    vscode.commands.registerCommand("githubControlCenter.review.unresolveThread", (thread: vscode.CommentThread) => void runThreadMutation(thread, "Unresolve conversation", unresolveThread)),
+    vscode.commands.registerCommand("githubControlCenter.review.addComment", (reply: vscode.CommentReply) => void handleAddComment(reply, false)),
+    vscode.commands.registerCommand("githubControlCenter.review.addSingleComment", (reply: vscode.CommentReply) => void handleAddComment(reply, true)),
+    vscode.commands.registerCommand("githubControlCenter.review.submit", () => void submitActiveReview()),
+    vscode.commands.registerCommand("githubControlCenter.review.discard", () => void discardActiveReview()),
+    // VSCode ships no default entry point for file-level comments (enableFileComments only enables the capability)
+    vscode.commands.registerCommand("githubControlCenter.review.addFileComment", () => {
+      void vscode.commands.executeCommand("workbench.action.addComment", { fileComment: true });
+    }),
+    vscode.commands.registerCommand("githubControlCenter.viewFilesAsList", () => {
+      void vscode.workspace.getConfiguration("githubControlCenter").update("files.layout", "flat", vscode.ConfigurationTarget.Global);
+    }),
+    vscode.commands.registerCommand("githubControlCenter.viewFilesAsTree", () => {
+      void vscode.workspace.getConfiguration("githubControlCenter").update("files.layout", "tree", vscode.ConfigurationTarget.Global);
+    }),
+    reviewController,
+    pendingStatusBar,
+    toReviewView.onDidChangeCheckboxState(handleCheckboxChange),
+    mineView.onDidChangeCheckboxState(handleCheckboxChange),
     { dispose: () => detailsPanel.dispose() },
     vscode.authentication.onDidChangeSessions((event) => {
       if (event.provider.id === "github") {
@@ -429,10 +723,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("githubControlCenter")) {
+        publishFilesLayoutContext();
         void refresh();
       }
     }),
   );
+
+  publishFilesLayoutContext();
 
   void refresh();
 }

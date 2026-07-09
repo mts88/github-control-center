@@ -1,6 +1,6 @@
 # GitHub Control Center
 
-A VSCode extension built by developers, for developers — to keep your GitHub situation under control: the PRs waiting for your review and your own open PRs, with a badge count on the activity bar, toast notifications, a GitHub-like PR page, and one-click actions (review, merge, checkout) — all without leaving the editor.
+A VSCode extension built by developers, for developers — to keep your GitHub situation under control: the PRs waiting for your review and your own open PRs, with a badge count on the activity bar, toast notifications, a GitHub-like PR page, full in-editor code review (diffs, line comments, pending reviews — no checkout needed), and one-click actions (review, merge, checkout) — all without leaving the editor.
 
 ## Features
 
@@ -9,6 +9,7 @@ A VSCode extension built by developers, for developers — to keep your GitHub s
 - **Toast notifications** when a new PR requests your review — and when one of your own PRs gets approved or receives a changes request — with quick actions (Open, Settings). Anti-spam by design: the first fetch after a reload never fires a storm.
 - **PR details panel**: click a PR to open a GitHub-like page — conversation timeline with rendered mermaid diagrams, merge box (review decision, checks, conflicts, out-of-date branch), reviewers, labels, aggregate diffstat — without leaving VSCode.
 - **Act on PRs**: comment, approve, request changes, merge (with the repo-allowed merge methods), mark your own drafts as ready for review, update an out-of-date branch (rebase or merge commit, GitHub-style selector), and check out the PR branch when the repository is open in the workspace. CI check names link straight to their runs.
+- **Code review in the editor**: expand a PR row to browse its changed files (directory tree or flat list), open real diffs pinned to the PR's commits — no checkout needed, fork PRs included — and review like on GitHub: comments on a line, a selection, or the whole file, batched into a pending review you submit as Comment / Approve / Request changes. Existing review threads show inline with reply and resolve; per-file viewed checkboxes sync with GitHub.
 - **Row shortcuts**: inline icons to check out the PR branch or open it in the browser; right-click to copy the URL or branch name, or mute the repository or its whole organization.
 - **Muting with search**: the "Manage Muted Repositories" command opens a picker that live-searches GitHub as you type — mute/unmute repositories or entire organizations in one click.
 - **Zero runtime dependencies**: native `fetch`, VSCode's built-in GitHub authentication, GitHub-rendered markdown (`bodyHTML`). Mermaid diagrams are rendered by a locally bundled copy of mermaid — no CDN, nothing leaves your machine.
@@ -27,6 +28,44 @@ The extension uses VSCode's GitHub authentication provider with the `repo` and `
 | `githubControlCenter.mutedRepos` | `[]` | Entries hidden from lists, badge, and notifications: `owner/repo` for one repository, `owner` (or `owner/*`) for a whole organization. Best edited via the **Manage Muted Repositories** command (searchable picker). |
 | `githubControlCenter.toReview.hideDrafts` | `false` | Hide draft PRs from the To Review list, badge, and notifications. |
 | `githubControlCenter.updateBranch.defaultMethod` | `REBASE` | Method preselected for the Update branch action (`REBASE` or `MERGE`). |
+| `githubControlCenter.files.layout` | `tree` | How a PR's changed files are laid out under its row: `tree` (directory hierarchy, compacted single-child folders) or `flat` (plain list). Also toggled from the `…` menu of either view. |
+
+## Reviewing pull requests
+
+A full code review without leaving the editor — and without checking out the branch.
+
+### Changed files
+
+Expand a PR row in either view to load its changed files, laid out as a **directory tree** (single-child folders compacted, like the explorer) or a **flat list** — switch with *View Files as List / Tree* in the `…` menu of the view, or via `githubControlCenter.files.layout`. Each file shows its change type (added / modified / deleted / renamed) and a diffstat tooltip; the checkbox marks it **viewed** on GitHub, exactly like the web UI.
+
+### Diffs
+
+Click a file to open a native VSCode diff between the PR's base and head commits. Contents come from the GitHub API pinned to the PR's SHAs, so:
+
+- no local checkout is needed, and your working tree is never touched;
+- fork PRs work out of the box;
+- what you see is exactly the PR's diff, regardless of local state.
+
+### Comments
+
+Commenting is only offered on lines that are part of the diff — the same rule GitHub enforces:
+
+- **Single line**: click the `+` in the gutter next to a changed or context line.
+- **Multi-line**: select the lines, then click the `+` on the selection. The selection must stay within one diff hunk.
+- **Whole file**: click the comment icon in the diff editor's title bar (also *GitHub Control Center: Comment on File* in the command palette). This is also the way to comment binaries and files too large for a text diff.
+
+Each comment widget offers two actions: **Add Review Comment** batches the comment into your pending review; **Add Single Comment** posts it immediately (refused while a pending review exists — submit or discard it first).
+
+### Pending review
+
+Your first review comment starts a GitHub **pending review**: draft comments are visible only to you until submitted, and the status bar shows `PR #N: k pending` while one is open. When you're done:
+
+- **Submit Review…** (status bar click, or command palette) — choose Comment, Approve, or Request changes; a summary body is required to request changes.
+- **Discard Pending Review** — deletes the draft and all its comments after a confirmation.
+
+### Existing threads
+
+Review threads already on the PR appear inline at their anchored lines (both diff sides), with the full conversation: reply from the thread, and resolve or unresolve it from the thread header. Pending comments are labeled, resolved threads start collapsed, and outdated threads (whose anchor line no longer exists in the diff) are skipped — read those on GitHub.
 
 ## Muting repositories and organizations
 

@@ -12,6 +12,57 @@ export interface IPullRequest {
   ciState: CiState;
   reviewDecision: string | null;
   headRefName: string;
+  baseRefOid: string;
+  headRefOid: string;
+}
+
+export type FileChangeType = "ADDED" | "MODIFIED" | "DELETED" | "RENAMED" | "COPIED" | "CHANGED";
+export type FileViewedState = "VIEWED" | "UNVIEWED" | "DISMISSED";
+export type DiffSide = "LEFT" | "RIGHT";
+
+export interface IPrFile {
+  path: string;
+  changeType: FileChangeType;
+  additions: number;
+  deletions: number;
+  viewedState: FileViewedState;
+}
+
+export interface IPrFilePatch {
+  path: string;
+  /** old path for renames — the LEFT side of the diff */
+  previousPath?: string;
+  /** unified diff hunks; absent for binaries and very large files */
+  patch?: string;
+}
+
+export interface IReviewThreadComment {
+  id: string;
+  author: string;
+  bodyMarkdown: string;
+  createdAt: string;
+  isPending: boolean;
+}
+
+export interface IReviewThread {
+  id: string;
+  path: string;
+  /** null when the thread is outdated and no longer anchorable */
+  line: number | null;
+  startLine: number | null;
+  side: DiffSide;
+  startSide: DiffSide | null;
+  isResolved: boolean;
+  isOutdated: boolean;
+  subjectType: "LINE" | "FILE";
+  comments: IReviewThreadComment[];
+}
+
+export interface IReviewThreadsSnapshot {
+  threads: IReviewThread[];
+  /** the viewer's PENDING review, if any — one per user per PR */
+  pendingReviewId: string | null;
+  pendingCommentCount: number;
 }
 
 export interface IPrSnapshot {

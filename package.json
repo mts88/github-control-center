@@ -104,6 +104,59 @@
         "category": "GitHub Control Center"
       },
       {
+        "command": "githubControlCenter.openFileDiff",
+        "title": "Open File Diff",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.viewFilesAsList",
+        "title": "View Files as List",
+        "category": "GitHub Control Center",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "githubControlCenter.viewFilesAsTree",
+        "title": "View Files as Tree",
+        "category": "GitHub Control Center",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "githubControlCenter.review.addComment",
+        "title": "Add Review Comment",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.review.addFileComment",
+        "title": "Comment on File",
+        "category": "GitHub Control Center",
+        "icon": "$(comment-add)"
+      },
+      {
+        "command": "githubControlCenter.review.submit",
+        "title": "Submit Review…",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.review.discard",
+        "title": "Discard Pending Review",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.review.addSingleComment",
+        "title": "Add Single Comment",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.review.resolveThread",
+        "title": "Resolve Conversation",
+        "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.review.unresolveThread",
+        "title": "Unresolve Conversation",
+        "category": "GitHub Control Center"
+      },
+      {
         "command": "githubControlCenter.openSettings",
         "title": "Settings",
         "category": "GitHub Control Center",
@@ -184,6 +237,19 @@
           ],
           "default": "REBASE",
           "description": "Method preselected for the Update branch action in the PR details panel."
+        },
+        "githubControlCenter.files.layout": {
+          "type": "string",
+          "enum": [
+            "tree",
+            "flat"
+          ],
+          "enumDescriptions": [
+            "Directory hierarchy with compacted single-child folders",
+            "Flat file list with the directory shown next to each name"
+          ],
+          "default": "tree",
+          "description": "How a pull request's changed files are laid out under its row."
         }
       }
     },
@@ -193,6 +259,16 @@
           "command": "githubControlCenter.refresh",
           "when": "view == githubControlCenter.toReview || view == githubControlCenter.mine",
           "group": "navigation@1"
+        },
+        {
+          "command": "githubControlCenter.viewFilesAsTree",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && githubControlCenter.filesLayout == flat",
+          "group": "1_manage@1"
+        },
+        {
+          "command": "githubControlCenter.viewFilesAsList",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && githubControlCenter.filesLayout == tree",
+          "group": "1_manage@1"
         },
         {
           "command": "githubControlCenter.openSettings",
@@ -212,6 +288,38 @@
         },
         {
           "command": "githubControlCenter.openPrDetails",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.openFileDiff",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.review.addComment",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.review.addFileComment",
+          "when": "resourceScheme == ghcc-pr"
+        },
+        {
+          "command": "githubControlCenter.review.submit",
+          "when": "githubControlCenter.hasPendingReview"
+        },
+        {
+          "command": "githubControlCenter.review.discard",
+          "when": "githubControlCenter.hasPendingReview"
+        },
+        {
+          "command": "githubControlCenter.review.addSingleComment",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.review.resolveThread",
+          "when": "false"
+        },
+        {
+          "command": "githubControlCenter.review.unresolveThread",
           "when": "false"
         },
         {
@@ -261,6 +369,37 @@
           "command": "githubControlCenter.muteOrg",
           "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
           "group": "2_manage@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "githubControlCenter.review.addFileComment",
+          "when": "resourceScheme == ghcc-pr",
+          "group": "navigation@1"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "githubControlCenter.review.addComment",
+          "when": "commentController == githubControlCenter",
+          "group": "inline@1"
+        },
+        {
+          "command": "githubControlCenter.review.addSingleComment",
+          "when": "commentController == githubControlCenter && commentThreadIsEmpty",
+          "group": "inline@2"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "githubControlCenter.review.resolveThread",
+          "when": "commentController == githubControlCenter && commentThread == canResolve",
+          "group": "navigation@1"
+        },
+        {
+          "command": "githubControlCenter.review.unresolveThread",
+          "when": "commentController == githubControlCenter && commentThread == canUnresolve",
+          "group": "navigation@1"
         }
       ]
     }
