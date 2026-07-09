@@ -4,7 +4,7 @@ name: PR Validation
 # safe only because no job ever checks out the PR head. Never add a checkout here.
 on:
   pull_request_target:
-    types: [opened, edited, reopened]
+    types: [opened, edited, reopened, synchronize]
 
 jobs:
   assign-author:
