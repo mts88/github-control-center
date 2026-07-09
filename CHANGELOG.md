@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/mts88/github-control-center/compare/v1.2.1...v1.3.0) (2026-07-09)
+
+
+### Features
+
+* show review decision glyph on PR tree rows ([#11](https://github.com/mts88/github-control-center/issues/11)) ([87df91e](https://github.com/mts88/github-control-center/commit/87df91ea634c943453a274886096bf7a8344f3f5))
+
 ## [1.2.1](https://github.com/mts88/github-control-center/compare/v1.2.0...v1.2.1) (2026-07-09)
 
 
