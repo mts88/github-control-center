@@ -252,7 +252,7 @@ function renderAvatar(avatarUrl: string, author: string): string {
 
 function renderHeader(details: IPrDetails): string {
   const pill = details.state === "OPEN" && details.isDraft ? { css: "draft", label: "Draft" } : PILLS[details.state];
-  const repoUrl = details.url.replace(/\/pull\/\d.*$/, "");
+  const repoUrl = details.url.replace(/\/pull\/\d+$/, "");
   return `
   <header class="pr-header">
     <div class="repo-line">
