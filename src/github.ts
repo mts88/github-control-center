@@ -308,12 +308,12 @@ export async function searchRepositories(token: string, text: string): Promise<s
 }
 
 function toPullRequests(nodes: IGraphQlPrNode[]): IPullRequest[] {
-  return nodes.filter((node) => Boolean(node?.id)).map(toPullRequest);
+  return nodes.filter((node): node is IGraphQlPrNode & { id: string } => Boolean(node?.id)).map(toPullRequest);
 }
 
-function toPullRequest(node: IGraphQlPrNode): IPullRequest {
+function toPullRequest(node: IGraphQlPrNode & { id: string }): IPullRequest {
   return {
-    id: node.id as string,
+    id: node.id,
     number: node.number,
     title: node.title,
     url: node.url,
