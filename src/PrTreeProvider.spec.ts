@@ -15,6 +15,7 @@ interface IPrOverrides {
 function buildPr(overrides: IPrOverrides = {}): IPullRequest {
   return {
     id: overrides.id ?? "PR_1",
+    number: 1,
     title: "A title",
     url: "https://github.com/acme/repo/pull/1",
     repo: overrides.repo ?? "acme/repo",

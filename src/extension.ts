@@ -3,7 +3,7 @@ import { addPrComment, fetchPrDetails, fetchPullRequests, getSession, markPrRead
 import { isRepoMuted } from "./muting";
 import { NewPrTracker } from "./NewPrTracker";
 import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
-import { PrDetailsPanel, type IPanelMessage } from "./PrDetailsPanel";
+import { formatPrTabTitle, PrDetailsPanel, type IPanelMessage } from "./PrDetailsPanel";
 import { PrTreeProvider, type TreeNode } from "./PrTreeProvider";
 import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
 import type { IPrDetails, IPrSnapshot, IPullRequest } from "./types";
@@ -54,13 +54,13 @@ export function activate(context: vscode.ExtensionContext): void {
   async function openPrDetails(pr: IPullRequest): Promise<void> {
     currentDetailsPr = pr;
     const requestId = ++detailsRequestSequence;
-    detailsPanel.showLoading(pr.title);
+    detailsPanel.showLoading(formatPrTabTitle(pr));
     const session = await getSession(false);
     if (requestId !== detailsRequestSequence) {
       return;
     }
     if (!session) {
-      detailsPanel.showMessage(pr.title, "Sign in to GitHub to load pull request details.");
+      detailsPanel.showMessage(formatPrTabTitle(pr), "Sign in to GitHub to load pull request details.");
       return;
     }
     try {
@@ -71,7 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     } catch (error) {
       if (requestId === detailsRequestSequence) {
-        detailsPanel.showMessage(pr.title, `Failed to load pull request details: ${toErrorMessage(error)}`);
+        detailsPanel.showMessage(formatPrTabTitle(pr), `Failed to load pull request details: ${toErrorMessage(error)}`);
       }
     }
   }
@@ -84,7 +84,7 @@ export function activate(context: vscode.ExtensionContext): void {
   ): Promise<void> {
     const session = await getSession(false);
     if (!session) {
-      detailsPanel.showMessage(pr.title, "Sign in to GitHub to act on pull requests.");
+      detailsPanel.showMessage(formatPrTabTitle(pr), "Sign in to GitHub to act on pull requests.");
       return;
     }
     mutationInFlight = true;

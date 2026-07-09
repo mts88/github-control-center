@@ -24,6 +24,7 @@ const SEARCH_PAGE_SIZE = 100;
 const PR_FIELDS = `
   ... on PullRequest {
     id
+    number
     title
     url
     isDraft
@@ -49,6 +50,7 @@ const SEARCH_QUERY = `
 
 interface IGraphQlPrNode {
   id?: string;
+  number: number;
   title: string;
   url: string;
   isDraft: boolean;
@@ -312,6 +314,7 @@ function toPullRequests(nodes: IGraphQlPrNode[]): IPullRequest[] {
 function toPullRequest(node: IGraphQlPrNode): IPullRequest {
   return {
     id: node.id as string,
+    number: node.number,
     title: node.title,
     url: node.url,
     repo: node.repository.nameWithOwner,

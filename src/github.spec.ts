@@ -13,6 +13,7 @@ interface IGraphQlNodeOverrides {
 function buildNode(overrides: IGraphQlNodeOverrides = {}) {
   return {
     id: overrides.id ?? "PR_1",
+    number: 1,
     title: overrides.title ?? "A title",
     url: "https://github.com/acme/repo/pull/1",
     isDraft: overrides.isDraft ?? false,
@@ -56,6 +57,7 @@ describe("fetchPullRequests", () => {
     expect(snapshot.toReview).toEqual([
       {
         id: "PR_1",
+        number: 1,
         title: "A title",
         url: "https://github.com/acme/repo/pull/1",
         repo: "acme/repo",
