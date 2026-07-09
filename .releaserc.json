@@ -9,7 +9,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "yarn dlx @vscode/vsce package --no-dependencies -o github-control-center-${nextRelease.version}.vsix"
+        "prepareCmd": "yarn vsce package --no-dependencies -o github-control-center-${nextRelease.version}.vsix"
       }
     ],
     [
@@ -23,6 +23,20 @@
       "@semantic-release/github",
       {
         "assets": [{ "path": "github-control-center-*.vsix" }]
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "verifyConditionsCmd": "yarn vsce verify-pat mts88",
+        "publishCmd": "yarn vsce publish --no-dependencies --packagePath github-control-center-${nextRelease.version}.vsix"
+      }
+    ],
+    [
+      "@semantic-release/exec",
+      {
+        "verifyConditionsCmd": "yarn ovsx verify-pat mts88",
+        "publishCmd": "yarn ovsx publish github-control-center-${nextRelease.version}.vsix"
       }
     ]
   ]

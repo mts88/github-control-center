@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g fill="none" stroke="#d7dae0" stroke-width="2" stroke-linecap="round">
+    <!-- git branch glyph -->
+    <line x1="8" y1="8" x2="8" y2="16"/>
+    <path d="M8,15 C8,10 11,8 13.8,8"/>
+    <circle cx="8" cy="5" r="2.2"/>
+    <circle cx="8" cy="19" r="2.2"/>
+    <circle cx="17" cy="8" r="2.2"/>
+    <!-- single radar arc from the branch node -->
+    <path d="M21.92,7.13 A5,5 0 0 0 17.87,3.08"/>
+  </g>
+</svg>

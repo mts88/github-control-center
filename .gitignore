@@ -9,3 +9,6 @@ dist/
 !.yarn/plugins
 !.yarn/sdks
 !.yarn/versions
+
+# local plan/red-team reviews — never tracked
+docs/reviews/
