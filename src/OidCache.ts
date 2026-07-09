@@ -22,11 +22,32 @@ export class OidCache<TValue> {
     this.entries.set(prId, { oid, value });
   }
 
-  peek(prId: string): TValue | undefined {
-    return this.entries.get(prId)?.value;
-  }
-
   delete(prId: string): void {
     this.entries.delete(prId);
+  }
+}
+
+/**
+ * OidCache for async loads: the in-flight promise is the cache entry, so
+ * concurrent loads of the same (prId, oid) share one request. Failed loads
+ * are evicted — the next load retries instead of replaying the rejection.
+ */
+export class AsyncOidCache<TValue> {
+  private readonly cache = new OidCache<Promise<TValue>>();
+
+  load(prId: string, oid: string, create: () => Promise<TValue>): Promise<TValue> {
+    const cached = this.cache.get(prId, oid);
+    if (cached) {
+      return cached;
+    }
+    const promise = create();
+    this.cache.set(prId, oid, promise);
+    promise.catch(() => {
+      // evict only if this promise is still the entry: a newer oid must survive a stale failure
+      if (this.cache.get(prId, oid) === promise) {
+        this.cache.delete(prId);
+      }
+    });
+    return promise;
   }
 }

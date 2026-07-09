@@ -24,7 +24,7 @@ import { ReviewController, type IPatchKey } from "./ReviewController";
 import { toThreadPosition } from "./reviewThreads";
 import { isRepoMuted } from "./muting";
 import { NewPrTracker } from "./NewPrTracker";
-import { OidCache } from "./OidCache";
+import { AsyncOidCache } from "./OidCache";
 import { PrContentProvider, fromPrUri, toPrUri } from "./PrContentProvider";
 import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
 import { formatPrTabTitle, PrDetailsPanel, type IPanelMessage } from "./PrDetailsPanel";
@@ -54,8 +54,8 @@ interface IGitExtension {
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel("GitHub Control Center");
-  const fileListCache = new OidCache<IPrFile[]>();
-  const patchCache = new OidCache<Map<string, IPrFilePatch>>();
+  const fileListCache = new AsyncOidCache<IPrFile[]>();
+  const patchCache = new AsyncOidCache<Map<string, IPrFilePatch>>();
 
   async function requireToken(): Promise<string> {
     const session = await getSession(false);
@@ -65,25 +65,15 @@ export function activate(context: vscode.ExtensionContext): void {
     return session.accessToken;
   }
 
-  async function loadPrFiles(pr: IPullRequest): Promise<IPrFile[]> {
-    const cached = fileListCache.get(pr.id, pr.headRefOid);
-    if (cached) {
-      return cached;
-    }
-    const files = await fetchPrFiles(await requireToken(), pr.id);
-    fileListCache.set(pr.id, pr.headRefOid, files);
-    return files;
+  function loadPrFiles(pr: IPullRequest): Promise<IPrFile[]> {
+    return fileListCache.load(pr.id, pr.headRefOid, async () => fetchPrFiles(await requireToken(), pr.id));
   }
 
-  async function ensurePatches(key: IPatchKey): Promise<Map<string, IPrFilePatch>> {
-    const cached = patchCache.get(key.id, key.headRefOid);
-    if (cached) {
-      return cached;
-    }
-    const patches = await fetchPrFilePatches(await requireToken(), key.repo, key.number);
-    const patchesByPath = new Map(patches.map((patch) => [patch.path, patch]));
-    patchCache.set(key.id, key.headRefOid, patchesByPath);
-    return patchesByPath;
+  function ensurePatches(key: IPatchKey): Promise<Map<string, IPrFilePatch>> {
+    return patchCache.load(key.id, key.headRefOid, async () => {
+      const patches = await fetchPrFilePatches(await requireToken(), key.repo, key.number);
+      return new Map(patches.map((patch) => [patch.path, patch]));
+    });
   }
 
   async function findPatch(key: IPatchKey, path: string): Promise<IPrFilePatch | undefined> {
