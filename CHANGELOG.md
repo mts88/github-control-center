@@ -1,3 +1,10 @@
+## [1.6.2](https://github.com/mts88/github-control-center/compare/v1.6.1...v1.6.2) (2026-07-09)
+
+
+### Bug Fixes
+
+* report in-progress checks and refresh the open pr details panel ([#17](https://github.com/mts88/github-control-center/issues/17)) ([56a479f](https://github.com/mts88/github-control-center/commit/56a479fbe61ef806552aeb1c24d72c989ca22511)), closes [#10](https://github.com/mts88/github-control-center/issues/10)
+
 ## [1.6.1](https://github.com/mts88/github-control-center/compare/v1.6.0...v1.6.1) (2026-07-09)
 
 
