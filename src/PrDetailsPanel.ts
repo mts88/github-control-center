@@ -10,6 +10,10 @@ export type IPanelMessage =
   | { command: "updateBranch"; method: UpdateBranchMethod }
   | { command: "checkout" };
 
+export function formatPrTabTitle(pr: { repo: string; title: string; number: number }): string {
+  return `${pr.repo} · ${pr.title} #${pr.number}`;
+}
+
 export class PrDetailsPanel {
   private panel: vscode.WebviewPanel | undefined;
   private messageHandler: ((message: IPanelMessage) => void) | undefined;
@@ -29,12 +33,12 @@ export class PrDetailsPanel {
   }
 
   showDetails(details: IPrDetails): void {
-    const panel = this.ensurePanel(`PR #${details.number}`);
+    const panel = this.ensurePanel(formatPrTabTitle(details));
     const mermaidScriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", "mermaid.min.js")).toString();
     const defaultUpdateMethod = vscode.workspace
       .getConfiguration("githubControlCenter")
       .get<UpdateBranchMethod>("updateBranch.defaultMethod", "REBASE");
-    panel.title = `PR #${details.number}`;
+    panel.title = formatPrTabTitle(details);
     panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod);
   }
 

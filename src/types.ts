@@ -2,6 +2,7 @@ export type CiState = "SUCCESS" | "FAILURE" | "PENDING" | "NONE";
 
 export interface IPullRequest {
   id: string;
+  number: number;
   title: string;
   url: string;
   repo: string;
