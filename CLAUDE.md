@@ -33,6 +33,7 @@ code --install-extension github-control-center-<version>.vsix
 
 - Conventional Commits enforced by commitlint via the committed `.githooks/commit-msg` hook (`core.hooksPath` is set by the `postinstall` script — no husky).
 - semantic-release runs on every push to `main` (`.github/workflows/release.yml`, config in `.releaserc.json`): commit-analyzer/notes (preset `conventionalcommits`) → changelog → npm bump (`npmPublish: false`) → vsce package via exec → git commit `chore(release): x.y.z [skip ci]` → GitHub Release with the vsix attached.
+- The release commit is pushed over SSH with the `RELEASE_DEPLOY_KEY` deploy key (checkout `ssh-key` + `repositoryUrl` in `.releaserc.json`): the branch ruleset on `main` blocks direct `GITHUB_TOKEN` pushes, and GitHub Actions cannot be a ruleset bypass actor on personal repos — deploy keys can. GitHub API calls (the Release itself) still use `GITHUB_TOKEN`.
 - **`version` in package.json and `CHANGELOG.md` are semantic-release-owned — never edit by hand.** Versions come from git tags, not from package.json.
 - Plugin order in `.releaserc.json` is load-bearing: the npm bump must precede the vsce packaging, which must precede the git commit.
 - `fix:` → patch, `feat:` → minor, breaking → major; other types release nothing.
