@@ -1,5 +1,10 @@
 # GitHub Control Center
 
+[![Visual Studio Marketplace Version](https://vsmarketplacebadges.dev/version-short/mts88.github-control-center.svg)](https://marketplace.visualstudio.com/items?itemName=mts88.github-control-center)
+[![Visual Studio Marketplace Installs](https://vsmarketplacebadges.dev/installs-short/mts88.github-control-center.svg)](https://marketplace.visualstudio.com/items?itemName=mts88.github-control-center)
+[![Visual Studio Marketplace Rating](https://vsmarketplacebadges.dev/rating-short/mts88.github-control-center.svg)](https://marketplace.visualstudio.com/items?itemName=mts88.github-control-center&ssr=false#review-details)
+[![Open VSX Version](https://img.shields.io/open-vsx/v/mts88/github-control-center?label=Open%20VSX&logo=vscodium)](https://open-vsx.org/extension/mts88/github-control-center)
+
 A VSCode extension built by developers, for developers — to keep your GitHub situation under control: the PRs waiting for your review and your own open PRs, with a badge count on the activity bar, toast notifications, a GitHub-like PR page, full in-editor code review (diffs, line comments, pending reviews — no checkout needed), and one-click actions (review, merge, checkout) — all without leaving the editor.
 
 ## Features

@@ -15,6 +15,10 @@
     "type": "git",
     "url": "https://github.com/mts88/github-control-center.git"
   },
+  "homepage": "https://github.com/mts88/github-control-center#readme",
+  "bugs": {
+    "url": "https://github.com/mts88/github-control-center/issues"
+  },
   "engines": {
     "vscode": "^1.90.0",
     "node": ">=22"
