@@ -413,6 +413,33 @@ describe("fetchPrDetails", () => {
     ]);
   });
 
+  it("should deduplicate same-named check runs keeping the latest run", async () => {
+    stubFetch({
+      data: {
+        node: buildDetailsNode({
+          statusCheckRollup: {
+            contexts: {
+              totalCount: 3,
+              nodes: [
+                { name: "Validate PR title", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci.example/run/21" },
+                { name: "check", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://ci.example/run/35" },
+                { name: "Validate PR title", status: "COMPLETED", conclusion: "SUCCESS", detailsUrl: "https://ci.example/run/22" },
+              ],
+            },
+          },
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.checks).toEqual([
+      { name: "Validate PR title", status: "SUCCESS", url: "https://ci.example/run/22" },
+      { name: "check", status: "SUCCESS", url: "https://ci.example/run/35" },
+    ]);
+    expect(details.checksTotal).toBe(2);
+  });
+
   it("should map a missing status check rollup to no checks", async () => {
     stubFetch({ data: { node: buildDetailsNode({ statusCheckRollup: null }) } });
 
