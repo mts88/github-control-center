@@ -8,7 +8,8 @@ export type IPanelMessage =
   | { command: "merge"; method: MergeMethod }
   | { command: "readyForReview" }
   | { command: "updateBranch"; method: UpdateBranchMethod }
-  | { command: "checkout" };
+  | { command: "checkout" }
+  | { command: "composerState"; hasText: boolean };
 
 export function formatPrTabTitle(pr: { repo: string; title: string; number: number }): string {
   return `${pr.repo} · ${pr.title} #${pr.number}`;
@@ -34,12 +35,18 @@ export class PrDetailsPanel {
 
   showDetails(details: IPrDetails): void {
     const panel = this.ensurePanel(formatPrTabTitle(details));
-    const mermaidScriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", "mermaid.min.js")).toString();
-    const defaultUpdateMethod = vscode.workspace
-      .getConfiguration("githubControlCenter")
-      .get<UpdateBranchMethod>("updateBranch.defaultMethod", "REBASE");
-    panel.title = formatPrTabTitle(details);
-    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod);
+    this.renderDetails(panel, details);
+  }
+
+  // background variant of showDetails: never creates the panel, never reveals it
+  updateDetails(details: IPrDetails): void {
+    if (this.panel) {
+      this.renderDetails(this.panel, details);
+    }
+  }
+
+  get isVisible(): boolean {
+    return this.panel?.visible ?? false;
   }
 
   reenableActions(): void {
@@ -48,6 +55,15 @@ export class PrDetailsPanel {
 
   dispose(): void {
     this.panel?.dispose();
+  }
+
+  private renderDetails(panel: vscode.WebviewPanel, details: IPrDetails): void {
+    const mermaidScriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", "mermaid.min.js")).toString();
+    const defaultUpdateMethod = vscode.workspace
+      .getConfiguration("githubControlCenter")
+      .get<UpdateBranchMethod>("updateBranch.defaultMethod", "REBASE");
+    panel.title = formatPrTabTitle(details);
+    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod);
   }
 
   private render(title: string, html: string): void {

@@ -139,12 +139,13 @@ const BASE_STYLE = `
   .merge-box .ok { color: var(--gr-green); }
   .merge-box .ko { color: var(--gr-red); }
   .merge-box .neutral { color: var(--gr-muted); }
+  .merge-box .pending { color: var(--vscode-charts-yellow, #d29922); }
   .merge-box ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
   .merge-box li { padding: 2px 0; color: var(--gr-muted); }
   .check-SUCCESS::before { content: "✓ "; color: var(--gr-green); }
-  .check-FAILURE::before, .check-ERROR::before { content: "✗ "; color: var(--gr-red); }
-  .check-PENDING::before, .check-EXPECTED::before { content: "● "; color: var(--vscode-charts-yellow, #d29922); }
-  .check-NEUTRAL::before, .check-SKIPPED::before, .check-CANCELLED::before { content: "○ "; color: var(--gr-muted); }
+  .check-FAILURE::before, .check-ERROR::before, .check-TIMED_OUT::before, .check-STARTUP_FAILURE::before, .check-CANCELLED::before, .check-ACTION_REQUIRED::before { content: "✗ "; color: var(--gr-red); }
+  .check-PENDING::before, .check-EXPECTED::before, .check-STALE::before { content: "● "; color: var(--vscode-charts-yellow, #d29922); }
+  .check-NEUTRAL::before, .check-SKIPPED::before { content: "○ "; color: var(--gr-muted); }
   .merge-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
   button, select {
@@ -307,14 +308,35 @@ function renderTimelineItem(item: IPrTimelineItem, prUrl: string, now: number): 
   </div>`;
 }
 
+// buckets mirror GitHub's own statusCheckRollup semantics (the same rollup the sidebar consumes):
+// cancelled/action-required block a merge as "not successful", stale awaits re-evaluation.
+// Green is NOT the default bucket — states outside both Sets render as in progress, so an
+// unknown/future GitHub state can never silently report "All checks passed".
+const FAILING_CHECK_STATES = new Set(["FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE", "CANCELLED", "ACTION_REQUIRED"]);
+const PASSED_CHECK_STATES = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
+
 function renderMergeBox(details: IPrDetails, defaultUpdateMethod: UpdateBranchMethod): string {
   const decision = details.reviewDecision ? (REVIEW_DECISION_LABELS[details.reviewDecision] ?? details.reviewDecision) : "● No review required";
   const decisionClass = details.reviewDecision === "APPROVED" ? "ok" : details.reviewDecision === "CHANGES_REQUESTED" ? "ko" : "neutral";
 
   const truncatedChecksCount = details.checksTotal - details.checks.length;
-  const failedChecksCount = details.checks.filter((check) => check.status === "FAILURE" || check.status === "ERROR").length;
-  const checksSummary = details.checks.length === 0 ? "● No checks" : failedChecksCount > 0 ? `✗ ${failedChecksCount} failing ${failedChecksCount === 1 ? "check" : "checks"}` : "✓ All checks passed";
-  const checksClass = details.checks.length === 0 ? "neutral" : failedChecksCount > 0 ? "ko" : "ok";
+  const failedChecksCount = details.checks.filter((check) => FAILING_CHECK_STATES.has(check.status)).length;
+  const inProgressChecksCount = details.checks.filter((check) => !FAILING_CHECK_STATES.has(check.status) && !PASSED_CHECK_STATES.has(check.status)).length;
+  let checksSummary: string;
+  let checksClass: string;
+  if (details.checks.length === 0) {
+    checksSummary = "● No checks";
+    checksClass = "neutral";
+  } else if (failedChecksCount > 0) {
+    checksSummary = `✗ ${failedChecksCount} failing ${failedChecksCount === 1 ? "check" : "checks"}`;
+    checksClass = "ko";
+  } else if (inProgressChecksCount > 0) {
+    checksSummary = `● ${inProgressChecksCount} ${inProgressChecksCount === 1 ? "check" : "checks"} in progress`;
+    checksClass = "pending";
+  } else {
+    checksSummary = "✓ All checks passed";
+    checksClass = "ok";
+  }
   const checksList = details.checks
     .map((check) => {
       const name = check.url ? `<a href="${escapeHtml(check.url)}">${escapeHtml(check.name)}</a>` : escapeHtml(check.name);
@@ -518,10 +540,12 @@ export function renderPrDetailsHtml(
     ${renderSidebar(processedDetails)}
   </div>`;
 
-  // the script only forwards user-typed text and the chosen merge method — never ids or urls
+  // the script only forwards user-typed text, the chosen merge method and a composer-has-text
+  // boolean — never ids or urls; the prKey below stays inside the webview (setState only)
   const script = `
   <script nonce="${nonce}">
     const vscodeApi = acquireVsCodeApi();
+    const prKey = ${JSON.stringify(`${processedDetails.repo}#${processedDetails.number}`)};
     const composerText = document.getElementById("composer-text");
     const allButtons = Array.from(document.querySelectorAll("button"));
 
@@ -552,9 +576,36 @@ export function renderPrDetailsHtml(
       if (requestChangesButton) {
         requestChangesButton.disabled = !hasText;
       }
+      return hasText;
     }
-    composerText.addEventListener("input", syncComposerButtons);
+    // the extension skips background panel refreshes while the composer holds text,
+    // so a poll re-render never wipes a draft comment
+    let composerHadText = false;
+    composerText.addEventListener("input", () => {
+      const hasText = syncComposerButtons();
+      if (hasText !== composerHadText) {
+        composerHadText = hasText;
+        vscodeApi.postMessage({ command: "composerState", hasText });
+      }
+    });
     syncComposerButtons();
+
+    // full HTML replaces (background refresh, post-mutation re-render) reset the scroll:
+    // restore the reading position when the same PR renders again
+    const savedState = vscodeApi.getState();
+    if (savedState && savedState.prKey === prKey && typeof savedState.scrollY === "number") {
+      window.scrollTo(0, savedState.scrollY);
+    }
+    let scrollSaveTimer;
+    window.addEventListener("scroll", () => {
+      if (scrollSaveTimer) {
+        return;
+      }
+      scrollSaveTimer = setTimeout(() => {
+        scrollSaveTimer = undefined;
+        vscodeApi.setState({ prKey, scrollY: window.scrollY });
+      }, 200);
+    });
 
     // the extension re-enables the buttons when a confirmation is cancelled or a mutation fails,
     // so the typed comment survives instead of being wiped by a full re-render
