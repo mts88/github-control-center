@@ -5,6 +5,10 @@
   "version": "1.1.0",
   "publisher": "mts88",
   "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#24292f",
+    "theme": "dark"
+  },
   "private": true,
   "license": "MIT",
   "repository": {
@@ -280,9 +284,11 @@
     "@semantic-release/git": "^10.0.1",
     "@types/node": "^22.12.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.21.5",
     "eslint": "^10.6.0",
     "mermaid": "^11.16.0",
+    "ovsx": "^1.0.2",
     "semantic-release": "^25.0.5",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.63.0",

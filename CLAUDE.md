@@ -32,10 +32,13 @@ code --install-extension github-control-center-<version>.vsix
 ## Commits & Releases
 
 - Conventional Commits enforced by commitlint via the committed `.githooks/commit-msg` hook (`core.hooksPath` is set by the `postinstall` script — no husky).
-- semantic-release runs on every push to `main` (`.github/workflows/release.yml`, config in `.releaserc.json`): commit-analyzer/notes (preset `conventionalcommits`) → changelog → npm bump (`npmPublish: false`) → vsce package via exec → git commit `chore(release): x.y.z [skip ci]` → GitHub Release with the vsix attached.
+- semantic-release runs on every push to `main` (`.github/workflows/release.yml`, config in `.releaserc.json`): commit-analyzer/notes (preset `conventionalcommits`) → changelog → npm bump (`npmPublish: false`) → vsce package via exec → git commit `chore(release): x.y.z [skip ci]` → GitHub Release with the vsix attached → the **same** vsix published to the VS Marketplace (`vsce publish --packagePath`) and Open VSX (`ovsx publish`).
+- Marketplace tokens are env-only: the `VSCE_PAT` / `OVSX_PAT` repo secrets are read natively by the CLIs — never pass them as command-line arguments (they would leak into public Actions logs on failure). Both are validated up front by `verify-pat` exec `verifyConditionsCmd`s, so a missing/expired token fails the release before any tag, commit, or GitHub Release exists.
+- Registry publish failure recovery: the GitHub Release (created first, by plugin order) always has the vsix — republish it manually with `yarn vsce publish --no-dependencies --packagePath <vsix>` / `yarn ovsx publish <vsix>`. Azure PATs expire (max ~1 year); renewal is the usual culprit. Unpublishing from either registry is destructive and cached downstream — never improvise it.
+- The release workflow runs no lint/typecheck/test: quality gates run in PR CI (`ci.yml`), enforced by the `main` ruleset's required status check (`check`) with the strict up-to-date-branch policy — the tested tree is exactly the squash result. Don't re-add the steps to `release.yml`; if the gate needs changing, change the ruleset.
 - The release commit is pushed over SSH with the `RELEASE_DEPLOY_KEY` deploy key (checkout `ssh-key` + `repositoryUrl` in `.releaserc.json`): the branch ruleset on `main` blocks direct `GITHUB_TOKEN` pushes, and GitHub Actions cannot be a ruleset bypass actor on personal repos — deploy keys can. GitHub API calls (the Release itself) still use `GITHUB_TOKEN`.
 - **`version` in package.json and `CHANGELOG.md` are semantic-release-owned — never edit by hand.** Versions come from git tags, not from package.json.
-- Plugin order in `.releaserc.json` is load-bearing: the npm bump must precede the vsce packaging, which must precede the git commit.
+- Plugin order in `.releaserc.json` is load-bearing: the npm bump must precede the vsce packaging, which must precede the git commit; the registry-publish exec instances come **after** `@semantic-release/github` so the durable artifact (GitHub Release + vsix) exists before any marketplace is touched.
 - `fix:` → patch, `feat:` → minor, breaking → major; other types release nothing.
 
 ## Testing

@@ -27,10 +27,11 @@ jobs:
           node-version-file: .nvmrc
           cache: yarn
       - run: yarn install --immutable
-      - run: yarn lint
-      - run: yarn typecheck
-      - run: yarn test
-      - run: yarn build
+      # quality gates (lint/typecheck/test/build) run in PR CI, enforced by the
+      # ruleset's required status check with the up-to-date-branch policy — the
+      # tree tested there is exactly the tree that lands here
       - run: yarn semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
