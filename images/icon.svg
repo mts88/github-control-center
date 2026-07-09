@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="56" fill="#24292f"/>
+
+  <!-- radar sweep wedge -->
+  <path d="M128,128 L178,41.4 A100,100 0 0 1 226.5,110.6 Z" fill="#3fb950" opacity="0.14"/>
+
+  <!-- radar rings, faint behind the glyph -->
+  <circle cx="128" cy="128" r="100" fill="none" stroke="#3fb950" stroke-width="4" opacity="0.3"/>
+  <circle cx="128" cy="128" r="64" fill="none" stroke="#3fb950" stroke-width="4" opacity="0.16"/>
+
+  <!-- git branch glyph -->
+  <line x1="104" y1="88" x2="104" y2="168" stroke="#3fb950" stroke-width="10" stroke-linecap="round"/>
+  <path d="M104,148 C104,108 132,92 156,92" fill="none" stroke="#3fb950" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="104" cy="72" r="15" fill="#24292f" stroke="#3fb950" stroke-width="10"/>
+  <circle cx="104" cy="184" r="15" fill="#24292f" stroke="#3fb950" stroke-width="10"/>
+  <circle cx="176" cy="92" r="15" fill="#24292f" stroke="#3fb950" stroke-width="10"/>
+</svg>

@@ -15,6 +15,7 @@ CHANGELOG.md
 .gitignore
 .nvmrc
 *.vsix
+images/icon.svg
 .github/
 .githooks/
 .claude/
