@@ -135,7 +135,7 @@ interface IDetailsNodeOverrides {
   mergeable?: string;
   state?: string;
   headRepository?: { nameWithOwner: string } | null;
-  mergeStateStatus?: string;
+  baseRef?: { compare: { behindBy: number } | null } | null;
   statusCheckRollup?: unknown;
   reviewRequests?: unknown[];
   latestReviews?: unknown[];
@@ -163,7 +163,7 @@ function buildDetailsNode(overrides: IDetailsNodeOverrides = {}) {
     baseRefName: "main",
     headRefName: "feature/thing",
     headRepository: overrides.headRepository ?? { nameWithOwner: "acme/repo" },
-    mergeStateStatus: overrides.mergeStateStatus ?? "CLEAN",
+    baseRef: overrides.baseRef !== undefined ? overrides.baseRef : { compare: { behindBy: 0 } },
     changedFiles: 3,
     additions: 10,
     deletions: 4,
@@ -222,7 +222,7 @@ describe("fetchPrDetails", () => {
   it("should map the GraphQL node to PR details", async () => {
     stubFetch({ data: { node: buildDetailsNode() } });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details).toEqual({
       number: 42,
@@ -295,7 +295,7 @@ describe("fetchPrDetails", () => {
       },
     });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.timeline.map((item) => item.author)).toEqual(["early", "late"]);
   });
@@ -315,7 +315,7 @@ describe("fetchPrDetails", () => {
       },
     });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.timeline.filter((item) => item.kind === "review").map((item) => item.author)).toEqual(["judge"]);
   });
@@ -327,7 +327,7 @@ describe("fetchPrDetails", () => {
       },
     });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.timelineTruncated).toBe(true);
   });
@@ -341,7 +341,7 @@ describe("fetchPrDetails", () => {
       },
     });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.mergeMethods).toEqual([]);
   });
@@ -356,7 +356,7 @@ describe("fetchPrDetails", () => {
       },
     });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.reviewers).toEqual([{ name: "luigi", state: "REQUESTED" }]);
   });
@@ -378,7 +378,7 @@ describe("fetchPrDetails", () => {
       },
     });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.checks).toEqual([
       { name: "build", status: "FAILURE", url: "https://ci.example/run/1" },
@@ -389,27 +389,52 @@ describe("fetchPrDetails", () => {
   it("should map a missing status check rollup to no checks", async () => {
     stubFetch({ data: { node: buildDetailsNode({ statusCheckRollup: null }) } });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.checks).toEqual([]);
     expect(details.checksTotal).toBe(0);
   });
 
-  it("should flag the PR as behind base only when mergeStateStatus is BEHIND", async () => {
-    stubFetch({ data: { node: buildDetailsNode({ mergeStateStatus: "BEHIND" }) } });
-    const behind = await fetchPrDetails("token", "PR_42");
+  it("should flag the PR as behind base only when the base has commits the head lacks", async () => {
+    stubFetch({ data: { node: buildDetailsNode({ baseRef: { compare: { behindBy: 3 } } }) } });
+    const behind = await fetchPrDetails("token", "PR_42", "feature/thing");
 
-    stubFetch({ data: { node: buildDetailsNode({ mergeStateStatus: "BLOCKED" }) } });
-    const blocked = await fetchPrDetails("token", "PR_42");
+    stubFetch({ data: { node: buildDetailsNode({ baseRef: { compare: { behindBy: 0 } } }) } });
+    const upToDate = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(behind.isBehindBase).toBe(true);
-    expect(blocked.isBehindBase).toBe(false);
+    expect(upToDate.isBehindBase).toBe(false);
+  });
+
+  it("should never flag a cross-fork PR as behind, even when a same-named base-repo branch is behind", async () => {
+    stubFetch({ data: { node: buildDetailsNode({ headRepository: { nameWithOwner: "someone-else/repo" }, baseRef: { compare: { behindBy: 3 } } }) } });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.isBehindBase).toBe(false);
+  });
+
+  it("should treat a missing comparison (fork head ref) as not behind", async () => {
+    stubFetch({ data: { node: buildDetailsNode({ baseRef: { compare: null } }) } });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.isBehindBase).toBe(false);
+  });
+
+  it("should send the head ref name as a query variable", async () => {
+    stubFetch({ data: { node: buildDetailsNode() } });
+
+    await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    const requestBody = JSON.parse((fetch as Mock).mock.calls[0][1].body as string);
+    expect(requestBody.variables).toEqual({ id: "PR_42", headRef: "feature/thing" });
   });
 
   it("should fall back to the base repo when headRepository is missing", async () => {
     stubFetch({ data: { node: buildDetailsNode({ headRepository: null }) } });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.headRepo).toBe("acme/repo");
   });
@@ -417,7 +442,7 @@ describe("fetchPrDetails", () => {
   it("should map an unexpected mergeable value to UNKNOWN", async () => {
     stubFetch({ data: { node: buildDetailsNode({ mergeable: "WHATEVER" }) } });
 
-    const details = await fetchPrDetails("token", "PR_42");
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.mergeable).toBe("UNKNOWN");
   });
@@ -425,7 +450,7 @@ describe("fetchPrDetails", () => {
   it("should throw when the node is not found", async () => {
     stubFetch({ data: { node: null } });
 
-    await expect(fetchPrDetails("token", "PR_42")).rejects.toThrow("Pull request not found");
+    await expect(fetchPrDetails("token", "PR_42", "feature/thing")).rejects.toThrow("Pull request not found");
   });
 });
 
@@ -492,14 +517,14 @@ describe("mutations", () => {
     expect(requestBody.variables).toEqual({ id: "PR_42", method: "SQUASH" });
   });
 
-  it("should post the update-branch mutation with the PR id", async () => {
+  it("should post the update-branch mutation with the PR id and update method", async () => {
     stubFetch({ data: { updatePullRequestBranch: { clientMutationId: null } } });
 
-    await updatePrBranch("token", "PR_42");
+    await updatePrBranch("token", "PR_42", "REBASE");
 
     const requestBody = lastRequestBody();
     expect(requestBody.query).toContain("updatePullRequestBranch");
-    expect(requestBody.variables).toEqual({ id: "PR_42" });
+    expect(requestBody.variables).toEqual({ id: "PR_42", method: "REBASE" });
   });
 
   it("should post the ready-for-review mutation with the PR id", async () => {

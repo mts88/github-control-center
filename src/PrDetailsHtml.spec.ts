@@ -54,6 +54,19 @@ function render(overrides: Partial<IPrDetails> = {}): string {
   return renderPrDetailsHtml(buildDetails(overrides), NONCE, NOW);
 }
 
+const MERMAID_URI = "vscode-resource://ext/dist/mermaid.min.js";
+
+// real shape produced by GitHub's bodyHTML for a ```mermaid fence:
+// the diagram source inside data-json is HTML-encoded TWICE (&amp;gt; → &gt; → >)
+const MERMAID_SECTION =
+  '<section class="js-render-needs-enrichment render-needs-enrichment" data-type="mermaid" data-host="https://viewscreen.githubusercontent.com">' +
+  '<div class="js-render-enrichment-target" data-json="{&quot;data&quot;:&quot;flowchart TD\\n  A--&amp;gt;B&quot;}"></div>' +
+  "<span>Loading</span></section>";
+
+function renderWithMermaid(overrides: Partial<IPrDetails> = {}): string {
+  return renderPrDetailsHtml(buildDetails(overrides), NONCE, NOW, MERMAID_URI);
+}
+
 describe("renderPrDetailsHtml", () => {
   it("should escape HTML in interpolated fields so injected markup stays inert", () => {
     const html = render({ title: '<script>alert("boom")</script>' });
@@ -74,6 +87,59 @@ describe("renderPrDetailsHtml", () => {
 
     expect(html).toContain(`script-src 'nonce-${NONCE}'`);
     expect(html).toContain(`<script nonce="${NONCE}">`);
+  });
+
+  describe("mermaid rendering", () => {
+    it("should load the local mermaid bundle with the nonce when the description contains a diagram", () => {
+      const html = renderWithMermaid({ bodyHtml: MERMAID_SECTION });
+
+      expect(html).toContain(`<script nonce="${NONCE}" src="${MERMAID_URI}"></script>`);
+      expect(html).toContain("mermaid.initialize");
+    });
+
+    it("should load the mermaid bundle when only a timeline body contains a diagram", () => {
+      const html = renderWithMermaid({
+        bodyHtml: "<p>plain</p>",
+        timeline: [{ kind: "comment", author: "mario", avatarUrl: "", bodyHtml: MERMAID_SECTION, createdAt: "2026-07-02T00:00:00Z" }],
+      });
+
+      expect(html).toContain(`src="${MERMAID_URI}"`);
+    });
+
+    it("should not load the mermaid bundle when no body contains a diagram", () => {
+      const html = renderWithMermaid();
+
+      expect(html).not.toContain(MERMAID_URI);
+      expect(html).not.toContain("mermaid.initialize");
+    });
+
+    it("should not load the mermaid bundle when no script uri is available", () => {
+      const html = render({ bodyHtml: MERMAID_SECTION });
+
+      expect(html).not.toContain("mermaid.initialize");
+    });
+
+    it("should replace GitHub's mermaid section with the fully decoded source", () => {
+      const html = renderWithMermaid({ bodyHtml: MERMAID_SECTION });
+
+      expect(html).toContain('<div class="gcc-mermaid"><pre>flowchart TD\n  A--&gt;B</pre></div>');
+      expect(html).not.toContain("js-render-enrichment-target");
+      expect(html).not.toContain("A--&amp;gt;B");
+    });
+
+    it("should keep the decoded source visible even without the mermaid bundle", () => {
+      const html = render({ bodyHtml: MERMAID_SECTION });
+
+      expect(html).toContain('<div class="gcc-mermaid"><pre>flowchart TD\n  A--&gt;B</pre></div>');
+    });
+
+    it("should leave a section with malformed data-json untouched", () => {
+      const brokenSection = '<section data-type="mermaid"><div class="js-render-enrichment-target" data-json="not json"></div></section>';
+
+      const html = renderWithMermaid({ bodyHtml: brokenSection });
+
+      expect(html).toContain(brokenSection);
+    });
   });
 
   describe("state pill", () => {
@@ -158,6 +224,25 @@ describe("renderPrDetailsHtml", () => {
       expect(render({ isBehindBase: true })).toContain('id="update-branch"');
       expect(render()).not.toContain('id="update-branch"');
       expect(render({ isBehindBase: true, state: "MERGED" })).not.toContain('id="update-branch"');
+    });
+
+    it("should offer both update methods with rebase as the default", () => {
+      const html = render({ isBehindBase: true });
+
+      const rebaseIndex = html.indexOf('<option value="REBASE">Update with rebase</option>');
+      const mergeIndex = html.indexOf('<option value="MERGE">Update with merge commit</option>');
+      expect(rebaseIndex).toBeGreaterThan(-1);
+      expect(mergeIndex).toBeGreaterThan(-1);
+      expect(rebaseIndex).toBeLessThan(mergeIndex);
+    });
+
+    it("should put the configured default update method first", () => {
+      const html = renderPrDetailsHtml(buildDetails({ isBehindBase: true }), NONCE, NOW, undefined, "MERGE");
+
+      const rebaseIndex = html.indexOf('<option value="REBASE">');
+      const mergeIndex = html.indexOf('<option value="MERGE">');
+      expect(mergeIndex).toBeGreaterThan(-1);
+      expect(mergeIndex).toBeLessThan(rebaseIndex);
     });
 
     it("should offer Checkout branch on open PRs only", () => {

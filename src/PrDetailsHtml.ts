@@ -1,9 +1,14 @@
-import type { IPrDetails, IPrTimelineItem, MergeMethod } from "./types";
+import type { IPrDetails, IPrTimelineItem, MergeMethod, UpdateBranchMethod } from "./types";
 
 export const MERGE_METHOD_LABELS: Record<MergeMethod, string> = {
   SQUASH: "Squash and merge",
   MERGE: "Create a merge commit",
   REBASE: "Rebase and merge",
+};
+
+export const UPDATE_METHOD_LABELS: Record<UpdateBranchMethod, string> = {
+  REBASE: "Update with rebase",
+  MERGE: "Update with merge commit",
 };
 
 const REVIEW_STATE_LABELS: Record<string, string> = {
@@ -117,6 +122,9 @@ const BASE_STYLE = `
   }
   .box-body { padding: 12px; overflow-x: auto; }
   .box-body img { max-width: 100%; }
+  .gcc-mermaid { overflow-x: auto; margin: 8px 0; }
+  .gcc-mermaid pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 6px; }
+  .mermaid-diagram svg { max-width: 100%; height: auto; }
   .box-body pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 6px; overflow-x: auto; }
   .box-body code { background: var(--vscode-textCodeBlock-background); border-radius: 3px; }
   .review-APPROVED { border-left: 3px solid var(--gr-green); }
@@ -294,7 +302,7 @@ function renderTimelineItem(item: IPrTimelineItem, prUrl: string, now: number): 
   </div>`;
 }
 
-function renderMergeBox(details: IPrDetails): string {
+function renderMergeBox(details: IPrDetails, defaultUpdateMethod: UpdateBranchMethod): string {
   const decision = details.reviewDecision ? (REVIEW_DECISION_LABELS[details.reviewDecision] ?? details.reviewDecision) : "● No review required";
   const decisionClass = details.reviewDecision === "APPROVED" ? "ok" : details.reviewDecision === "CHANGES_REQUESTED" ? "ko" : "neutral";
 
@@ -319,9 +327,17 @@ function renderMergeBox(details: IPrDetails): string {
     .map((method) => `<option value="${method}">${MERGE_METHOD_LABELS[method]}</option>`)
     .join("");
 
+  const updateMethodsInOrder: UpdateBranchMethod[] = defaultUpdateMethod === "MERGE" ? ["MERGE", "REBASE"] : ["REBASE", "MERGE"];
+  const updateMethodOptions = updateMethodsInOrder
+    .map((method) => `<option value="${method}">${UPDATE_METHOD_LABELS[method]}</option>`)
+    .join("");
   const updateBranchRow =
     isOpen && details.isBehindBase
-      ? `<div class="row merge-actions"><span class="neutral">This branch is out-of-date with the base branch</span><button id="update-branch">Update branch</button></div>`
+      ? `<div class="row merge-actions">
+          <span class="neutral">This branch is out-of-date with the base branch</span>
+          <button id="update-branch">Update branch</button>
+          <select id="update-method" aria-label="Update method">${updateMethodOptions}</select>
+        </div>`
       : "";
 
   const actionButtons: string[] = [];
@@ -399,23 +415,102 @@ function renderSidebar(details: IPrDetails): string {
   </aside>`;
 }
 
-export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: number): string {
-  const timelineItems = details.timeline.map((item) => renderTimelineItem(item, details.url, now)).join("");
-  const olderLink = details.timelineTruncated ? `<a class="older-link" href="${escapeHtml(details.url)}">View older conversation on GitHub</a>` : "";
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/gi, (_match, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
+// GitHub ships each ```mermaid fence as a <section> rendered by its own site JS (dead in a webview).
+// The diagram source in data-json is HTML-encoded TWICE: once for the attribute, once inside the payload.
+// We swap the section for a plain <pre> with the fully decoded source — always readable, even unrendered —
+// and the webview bootstrap upgrades it to an inline SVG.
+function replaceMermaidSections(html: string): string {
+  return html.replace(/<section[^>]*data-type="mermaid"[\s\S]*?<\/section>/g, (section) => {
+    const jsonAttribute = section.match(/data-json="([^"]*)"/);
+    if (!jsonAttribute) {
+      return section;
+    }
+    try {
+      const payload = JSON.parse(decodeHtmlEntities(jsonAttribute[1])) as { data?: string };
+      const source = decodeHtmlEntities(payload.data ?? "");
+      if (!source) {
+        return section;
+      }
+      return `<div class="gcc-mermaid"><pre>${escapeHtml(source)}</pre></div>`;
+    } catch {
+      return section;
+    }
+  });
+}
+
+function renderMermaidSupport(details: IPrDetails, nonce: string, mermaidScriptUri: string | undefined): { scriptTag: string; bootstrap: string } {
+  const bodies = [details.bodyHtml, ...details.timeline.map((item) => item.bodyHtml)];
+  const hasMermaid = bodies.some((html) => html.includes('class="gcc-mermaid"'));
+  if (!hasMermaid || !mermaidScriptUri) {
+    return { scriptTag: "", bootstrap: "" };
+  }
+  // bundled mermaid, loaded lazily from the extension (no CDN: CSP stays nonce-only, PR content stays local)
+  const bootstrap = `
+    const isDarkTheme = document.body.classList.contains("vscode-dark") || document.body.classList.contains("vscode-high-contrast");
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: isDarkTheme ? "dark" : "default" });
+    document.querySelectorAll(".gcc-mermaid").forEach(async (container, index) => {
+      const sourceElement = container.querySelector("pre");
+      if (!sourceElement) {
+        return;
+      }
+      const renderId = "gccMermaid" + index;
+      try {
+        const rendered = await mermaid.render(renderId, sourceElement.textContent);
+        container.innerHTML = rendered.svg;
+        container.classList.add("mermaid-diagram");
+      } catch {
+        // mermaid leaves its error artwork in the document on failure: remove it, keep the readable source
+        for (const strayId of [renderId, "d" + renderId]) {
+          const strayElement = document.getElementById(strayId);
+          if (strayElement) {
+            strayElement.remove();
+          }
+        }
+      }
+    });`;
+  return { scriptTag: `<script nonce="${nonce}" src="${escapeHtml(mermaidScriptUri)}"></script>`, bootstrap };
+}
+
+export function renderPrDetailsHtml(
+  details: IPrDetails,
+  nonce: string,
+  now: number,
+  mermaidScriptUri?: string,
+  defaultUpdateMethod: UpdateBranchMethod = "REBASE",
+): string {
+  const processedDetails: IPrDetails = {
+    ...details,
+    bodyHtml: replaceMermaidSections(details.bodyHtml),
+    timeline: details.timeline.map((item) => ({ ...item, bodyHtml: replaceMermaidSections(item.bodyHtml) })),
+  };
+  const timelineItems = processedDetails.timeline.map((item) => renderTimelineItem(item, processedDetails.url, now)).join("");
+  const olderLink = processedDetails.timelineTruncated ? `<a class="older-link" href="${escapeHtml(processedDetails.url)}">View older conversation on GitHub</a>` : "";
+  const mermaidSupport = renderMermaidSupport(processedDetails, nonce, mermaidScriptUri);
 
   const body = `
-  ${renderHeader(details)}
+  ${renderHeader(processedDetails)}
   <div class="layout">
     <main>
       <div class="timeline">
-        ${renderDescription(details, now)}
+        ${renderDescription(processedDetails, now)}
         ${timelineItems}
       </div>
       ${olderLink}
-      ${renderMergeBox(details)}
-      ${renderComposer(details)}
+      ${renderMergeBox(processedDetails, defaultUpdateMethod)}
+      ${renderComposer(processedDetails)}
     </main>
-    ${renderSidebar(details)}
+    ${renderSidebar(processedDetails)}
   </div>`;
 
   // the script only forwards user-typed text and the chosen merge method — never ids or urls
@@ -443,7 +538,7 @@ export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: num
     wire("approve", () => ({ command: "review", event: "APPROVE", text: composerText.value }));
     wire("merge", () => ({ command: "merge", method: document.getElementById("merge-method").value }));
     wire("ready", () => ({ command: "readyForReview" }));
-    wire("update-branch", () => ({ command: "updateBranch" }));
+    wire("update-branch", () => ({ command: "updateBranch", method: document.getElementById("update-method").value }));
     wire("checkout", () => ({ command: "checkout" }));
 
     function syncComposerButtons() {
@@ -464,7 +559,8 @@ export function renderPrDetailsHtml(details: IPrDetails, nonce: string, now: num
         syncComposerButtons();
       }
     });
+${mermaidSupport.bootstrap}
   </script>`;
 
-  return htmlDocument(nonce, body, script);
+  return htmlDocument(nonce, body, mermaidSupport.scriptTag + script);
 }

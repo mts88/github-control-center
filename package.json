@@ -166,6 +166,16 @@
           "type": "boolean",
           "default": false,
           "description": "Hide draft PRs from the To Review list, the badge, and notifications."
+        },
+        "githubControlCenter.updateBranch.defaultMethod": {
+          "type": "string",
+          "enum": ["REBASE", "MERGE"],
+          "enumDescriptions": [
+            "Update with rebase (force-pushes the PR branch)",
+            "Update with a merge commit"
+          ],
+          "default": "REBASE",
+          "description": "Method preselected for the Update branch action in the PR details panel."
         }
       }
     },
@@ -268,6 +278,7 @@
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.21.5",
     "eslint": "^10.6.0",
+    "mermaid": "^11.16.0",
     "semantic-release": "^25.0.5",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.63.0",

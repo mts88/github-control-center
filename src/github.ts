@@ -10,6 +10,7 @@ import type {
   MergeMethod,
   MergeableState,
   PrState,
+  UpdateBranchMethod,
 } from "./types";
 
 const GITHUB_AUTH_PROVIDER = "github";
@@ -60,7 +61,7 @@ interface IGraphQlPrNode {
 }
 
 const DETAILS_QUERY = `
-  query ($id: ID!) {
+  query ($id: ID!, $headRef: String!) {
     node(id: $id) {
       ... on PullRequest {
         number
@@ -75,7 +76,7 @@ const DETAILS_QUERY = `
         baseRefName
         headRefName
         headRepository { nameWithOwner }
-        mergeStateStatus
+        baseRef { compare(headRef: $headRef) { behindBy } }
         changedFiles
         additions
         deletions
@@ -183,7 +184,7 @@ interface IGraphQlDetailsNode {
   baseRefName: string;
   headRefName: string;
   headRepository: { nameWithOwner: string } | null;
-  mergeStateStatus: string;
+  baseRef: { compare: { behindBy: number } | null } | null;
   changedFiles: number;
   additions: number;
   deletions: number;
@@ -255,8 +256,8 @@ export async function fetchPullRequests(token: string): Promise<IPrSnapshot> {
   };
 }
 
-export async function fetchPrDetails(token: string, prId: string): Promise<IPrDetails> {
-  const data = await postGraphQl<{ node: IGraphQlDetailsNode | null }>(token, DETAILS_QUERY, { id: prId });
+export async function fetchPrDetails(token: string, prId: string, headRefName: string): Promise<IPrDetails> {
+  const data = await postGraphQl<{ node: IGraphQlDetailsNode | null }>(token, DETAILS_QUERY, { id: prId, headRef: headRefName });
   if (!data.node) {
     throw new Error("Pull request not found");
   }
@@ -280,15 +281,15 @@ export async function markPrReadyForReview(token: string, prId: string): Promise
 }
 
 const UPDATE_BRANCH_MUTATION = `
-  mutation ($id: ID!) {
-    updatePullRequestBranch(input: { pullRequestId: $id }) {
+  mutation ($id: ID!, $method: PullRequestBranchUpdateMethod!) {
+    updatePullRequestBranch(input: { pullRequestId: $id, updateMethod: $method }) {
       clientMutationId
     }
   }
 `;
 
-export async function updatePrBranch(token: string, prId: string): Promise<void> {
-  await postGraphQl(token, UPDATE_BRANCH_MUTATION, { id: prId });
+export async function updatePrBranch(token: string, prId: string, method: UpdateBranchMethod): Promise<void> {
+  await postGraphQl(token, UPDATE_BRANCH_MUTATION, { id: prId, method });
 }
 
 const REPO_SEARCH_QUERY = `
@@ -323,6 +324,10 @@ function toPullRequest(node: IGraphQlPrNode): IPullRequest {
   };
 }
 
+function isSameRepoPr(node: IGraphQlDetailsNode): boolean {
+  return !node.headRepository || node.headRepository.nameWithOwner === node.repository.nameWithOwner;
+}
+
 function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
   const contexts = node.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
   return {
@@ -339,7 +344,10 @@ function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
     baseRefName: node.baseRefName,
     headRefName: node.headRefName,
     headRepo: node.headRepository?.nameWithOwner ?? node.repository.nameWithOwner,
-    isBehindBase: node.mergeStateStatus === "BEHIND",
+    // Ref.compare works without branch protection; mergeStateStatus only reports BEHIND with strict protection.
+    // compare(headRef:) resolves the name inside the BASE repo, so on a cross-fork PR a same-named
+    // base-repo branch would be compared instead — skip the check entirely for forks.
+    isBehindBase: isSameRepoPr(node) && (node.baseRef?.compare?.behindBy ?? 0) > 0,
     commitsCount: node.commits.totalCount,
     changedFiles: node.changedFiles,
     additions: node.additions,
