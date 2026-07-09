@@ -406,6 +406,14 @@ describe("fetchPrDetails", () => {
     expect(upToDate.isBehindBase).toBe(false);
   });
 
+  it("should never flag a cross-fork PR as behind, even when a same-named base-repo branch is behind", async () => {
+    stubFetch({ data: { node: buildDetailsNode({ headRepository: { nameWithOwner: "someone-else/repo" }, baseRef: { compare: { behindBy: 3 } } }) } });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.isBehindBase).toBe(false);
+  });
+
   it("should treat a missing comparison (fork head ref) as not behind", async () => {
     stubFetch({ data: { node: buildDetailsNode({ baseRef: { compare: null } }) } });
 

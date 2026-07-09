@@ -324,6 +324,10 @@ function toPullRequest(node: IGraphQlPrNode): IPullRequest {
   };
 }
 
+function isSameRepoPr(node: IGraphQlDetailsNode): boolean {
+  return !node.headRepository || node.headRepository.nameWithOwner === node.repository.nameWithOwner;
+}
+
 function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
   const contexts = node.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
   return {
@@ -340,8 +344,10 @@ function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
     baseRefName: node.baseRefName,
     headRefName: node.headRefName,
     headRepo: node.headRepository?.nameWithOwner ?? node.repository.nameWithOwner,
-    // Ref.compare works without branch protection; mergeStateStatus only reports BEHIND with strict protection
-    isBehindBase: (node.baseRef?.compare?.behindBy ?? 0) > 0,
+    // Ref.compare works without branch protection; mergeStateStatus only reports BEHIND with strict protection.
+    // compare(headRef:) resolves the name inside the BASE repo, so on a cross-fork PR a same-named
+    // base-repo branch would be compared instead — skip the check entirely for forks.
+    isBehindBase: isSameRepoPr(node) && (node.baseRef?.compare?.behindBy ?? 0) > 0,
     commitsCount: node.commits.totalCount,
     changedFiles: node.changedFiles,
     additions: node.additions,
