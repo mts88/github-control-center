@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/mts88/github-control-center/compare/v1.4.0...v1.5.0) (2026-07-09)
+
+
+### Features
+
+* show repository and PR title in details tab ([#13](https://github.com/mts88/github-control-center/issues/13)) ([256f796](https://github.com/mts88/github-control-center/commit/256f7960b26cfb3813e92fc18b7a74bf2a2cfb96))
+
 # [1.4.0](https://github.com/mts88/github-control-center/compare/v1.3.0...v1.4.0) (2026-07-09)
 
 
