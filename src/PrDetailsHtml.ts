@@ -59,6 +59,7 @@ const BASE_STYLE = `
   }
 
   .pr-header { border-bottom: 1px solid var(--gr-border); padding-bottom: 12px; margin-bottom: 20px; }
+  .repo-line { color: var(--gr-muted); font-size: 0.92em; margin-bottom: 6px; }
   .pr-header h1 { font-size: 1.5em; font-weight: 500; margin: 0 0 6px; }
   .pr-number { color: var(--gr-muted); font-weight: 300; }
   .state-pill {
@@ -251,8 +252,13 @@ function renderAvatar(avatarUrl: string, author: string): string {
 
 function renderHeader(details: IPrDetails): string {
   const pill = details.state === "OPEN" && details.isDraft ? { css: "draft", label: "Draft" } : PILLS[details.state];
+  const repoUrl = details.url.replace(/\/pull\/\d+$/, "");
   return `
   <header class="pr-header">
+    <div class="repo-line">
+      <a href="${escapeHtml(repoUrl)}">${escapeHtml(details.repo)}</a>
+      · <a href="${escapeHtml(details.url)}">Open on GitHub</a>
+    </div>
     <h1>${escapeHtml(details.title)} <span class="pr-number">#${details.number}</span></h1>
     <div>
       <span class="state-pill ${pill.css}">${pill.label}</span>
@@ -260,7 +266,6 @@ function renderHeader(details: IPrDetails): string {
         <strong>${escapeHtml(details.author)}</strong> wants to merge ${details.commitsCount} ${details.commitsCount === 1 ? "commit" : "commits"}
         into <span class="branch">${escapeHtml(details.baseRefName)}</span>
         from <span class="branch">${escapeHtml(details.headRefName)}</span>
-        · <a href="${escapeHtml(details.url)}">Open on GitHub</a>
       </span>
     </div>
   </header>`;

@@ -142,6 +142,14 @@ describe("renderPrDetailsHtml", () => {
     });
   });
 
+  describe("header", () => {
+    it("should link the repository name and Open on GitHub above the title", () => {
+      const html = render();
+      expect(html).toContain('<a href="https://github.com/acme/repo">acme/repo</a>');
+      expect(html).toContain('<a href="https://github.com/acme/repo/pull/42">Open on GitHub</a>');
+    });
+  });
+
   describe("state pill", () => {
     it.each([
       [{ state: "OPEN" as const }, ">Open<"],
