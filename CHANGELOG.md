@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/mts88/github-control-center/compare/v1.5.0...v1.6.0) (2026-07-09)
+
+
+### Features
+
+* add in-editor pull request code review ([#14](https://github.com/mts88/github-control-center/issues/14)) ([644c3c9](https://github.com/mts88/github-control-center/commit/644c3c9f8f95b1ca44675df4fabb00a03be0a70b))
+
 # [1.5.0](https://github.com/mts88/github-control-center/compare/v1.4.0...v1.5.0) (2026-07-09)
 
 
