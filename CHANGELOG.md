@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/mts88/github-control-center/compare/v1.2.0...v1.2.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* render marketplace icon with transparent corners ([#7](https://github.com/mts88/github-control-center/issues/7)) ([e1ee226](https://github.com/mts88/github-control-center/commit/e1ee226ecc845d6e2ca1066b5c8cedefcfd5a2a2))
+
 # [1.2.0](https://github.com/mts88/github-control-center/compare/v1.1.0...v1.2.0) (2026-07-09)
 
 
