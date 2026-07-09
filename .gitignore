@@ -12,3 +12,6 @@ dist/
 
 # local plan/red-team reviews — never tracked
 docs/reviews/
+
+# Claude Code worktrees — never tracked
+.claude/worktrees/
