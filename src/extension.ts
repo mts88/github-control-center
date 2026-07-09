@@ -34,6 +34,8 @@ import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
 import type { IPrDetails, IPrFile, IPrFilePatch, IPrSnapshot, IPullRequest } from "./types";
 
 const POLL_INTERVAL_MS = 150_000;
+// GitHub reads lag behind writes: one delayed catch-up refresh after each successful mutation
+const POST_MUTATION_REFRESH_DELAY_MS = 3_000;
 
 // minimal typed surface of the built-in vscode.git extension API
 interface IGitRemote {
@@ -302,6 +304,10 @@ export function activate(context: vscode.ExtensionContext): void {
   let currentDetails: IPrDetails | undefined;
   let detailsRequestSequence = 0;
   let mutationInFlight = false;
+  // background refreshes are skipped while a draft comment sits in the composer:
+  // a full HTML re-render would wipe it
+  let composerHasText = false;
+  let postMutationTimer: ReturnType<typeof setTimeout> | undefined;
   // repos seen in the last raw snapshot (pre-filter, so muted ones stay unmutable from the picker)
   let knownRepos = new Set<string>();
 
@@ -315,6 +321,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function openPrDetails(pr: IPullRequest): Promise<void> {
     currentDetailsPr = pr;
+    composerHasText = false; // every user-initiated render starts from an empty composer
     const requestId = ++detailsRequestSequence;
     detailsPanel.showLoading(formatPrTabTitle(pr));
     const session = await getSession(false);
@@ -338,6 +345,34 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  // background counterpart of openPrDetails, run on every poll cycle: it reads the request
+  // sequence without bumping it (a user click mid-fetch always wins), never reveals the panel,
+  // and failures stay silent — the last good render must survive (same philosophy as the poll)
+  async function refreshOpenDetails(): Promise<void> {
+    const pr = currentDetailsPr;
+    if (!pr || !detailsPanel.isVisible || mutationInFlight || composerHasText) {
+      return;
+    }
+    const requestId = detailsRequestSequence;
+    const session = await getSession(false);
+    if (!session || requestId !== detailsRequestSequence) {
+      return;
+    }
+    try {
+      const details = await fetchPrDetails(session.accessToken, pr.id, pr.headRefName);
+      if (requestId !== detailsRequestSequence || mutationInFlight || composerHasText) {
+        return;
+      }
+      if (JSON.stringify(details) === JSON.stringify(currentDetails)) {
+        return; // unchanged snapshot: skip the re-render, a full HTML replace resets the scroll
+      }
+      currentDetails = details;
+      detailsPanel.updateDetails(details);
+    } catch (error) {
+      output.appendLine(`[${new Date().toISOString()}] Details refresh failed: ${toErrorMessage(error)}`);
+    }
+  }
+
   async function runPrMutation(
     pr: IPullRequest,
     actionLabel: string,
@@ -346,6 +381,7 @@ export function activate(context: vscode.ExtensionContext): void {
   ): Promise<void> {
     const session = await getSession(false);
     if (!session) {
+      composerHasText = false; // this render drops the composer too
       detailsPanel.showMessage(formatPrTabTitle(pr), "Sign in to GitHub to act on pull requests.");
       return;
     }
@@ -355,6 +391,10 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showInformationMessage(successMessage);
       void refresh();
       void openPrDetails(pr);
+      // GitHub reads lag behind writes (search index, review decision): the immediate
+      // refreshes above often return stale data, so schedule one delayed catch-up pass
+      clearTimeout(postMutationTimer);
+      postMutationTimer = setTimeout(() => void refresh(), POST_MUTATION_REFRESH_DELAY_MS);
     } catch (error) {
       void vscode.window.showErrorMessage(`${actionLabel} failed: ${toErrorMessage(error)}`);
       detailsPanel.reenableActions();
@@ -561,6 +601,11 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   detailsPanel.onMessage((message) => {
+    // tracked before the in-flight guard: typing during a mutation must still update the flag
+    if (message.command === "composerState") {
+      composerHasText = message.hasText;
+      return;
+    }
     if (!currentDetailsPr || mutationInFlight) {
       return;
     }
@@ -634,6 +679,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // poll failures stay silent: keep the last good data, no error toast every 2.5 minutes
       output.appendLine(`[${new Date().toISOString()}] Poll failed: ${toErrorMessage(error)}`);
     }
+    void refreshOpenDetails();
   }
 
   const pollTimer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
@@ -643,6 +689,7 @@ export function activate(context: vscode.ExtensionContext): void {
     mineView,
     output,
     { dispose: () => clearInterval(pollTimer) },
+    { dispose: () => clearTimeout(postMutationTimer) },
     vscode.commands.registerCommand("githubControlCenter.refresh", () => void refresh()),
     vscode.commands.registerCommand("githubControlCenter.signIn", async () => {
       await getSession(true);

@@ -272,6 +272,86 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain("1 failing check");
       expect(html).toContain("+3 more on GitHub");
     });
+
+    it("should summarize in-progress checks instead of reporting them as passed", () => {
+      const html = render({
+        checks: [
+          { name: "build", status: "PENDING" },
+          { name: "lint", status: "SUCCESS" },
+        ],
+        checksTotal: 2,
+      });
+
+      expect(html).toContain("1 check in progress");
+      expect(html).toContain('class="row pending"');
+      expect(html).not.toContain("All checks passed");
+    });
+
+    it("should count EXPECTED and ACTION_REQUIRED checks as in progress", () => {
+      const html = render({
+        checks: [
+          { name: "deploy", status: "EXPECTED" },
+          { name: "approval", status: "ACTION_REQUIRED" },
+        ],
+        checksTotal: 2,
+      });
+
+      expect(html).toContain("2 checks in progress");
+    });
+
+    it("should prioritize failing checks over in-progress ones", () => {
+      const html = render({
+        checks: [
+          { name: "build", status: "FAILURE" },
+          { name: "lint", status: "PENDING" },
+        ],
+        checksTotal: 2,
+      });
+
+      expect(html).toContain("1 failing check");
+      expect(html).not.toContain("in progress");
+    });
+
+    it("should count TIMED_OUT and STARTUP_FAILURE checks as failing", () => {
+      const html = render({
+        checks: [
+          { name: "build", status: "TIMED_OUT" },
+          { name: "lint", status: "STARTUP_FAILURE" },
+        ],
+        checksTotal: 2,
+      });
+
+      expect(html).toContain("2 failing checks");
+    });
+
+    it("should keep the all-passed summary when every check succeeded", () => {
+      const html = render({ checks: [{ name: "build", status: "SUCCESS" }], checksTotal: 1 });
+
+      expect(html).toContain("All checks passed");
+    });
+
+    it("should show a neutral summary when there are no checks", () => {
+      const html = render({ checks: [], checksTotal: 0 });
+
+      expect(html).toContain("No checks");
+      expect(html).not.toContain("All checks passed");
+    });
+  });
+
+  describe("webview script", () => {
+    it("should post composer empty/non-empty transitions to the extension", () => {
+      const html = render();
+
+      expect(html).toContain('command: "composerState"');
+    });
+
+    it("should persist and restore the scroll position keyed by PR", () => {
+      const html = render();
+
+      expect(html).toContain('"acme/repo#42"');
+      expect(html).toContain("vscodeApi.setState({ prKey, scrollY: window.scrollY })");
+      expect(html).toContain("vscodeApi.getState()");
+    });
   });
 
   describe("composer", () => {
