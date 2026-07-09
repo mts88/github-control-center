@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/mts88/github-control-center/compare/v1.1.0...v1.2.0) (2026-07-09)
+
+
+### Features
+
+* add extension icons and marketplace publishing ([#6](https://github.com/mts88/github-control-center/issues/6)) ([433313f](https://github.com/mts88/github-control-center/commit/433313f0f1b3a2d173d0e450ee95d8a0d68360ef))
+
 # [1.1.0](https://github.com/mts88/github-control-center/compare/v1.0.1...v1.1.0) (2026-07-09)
 
 
