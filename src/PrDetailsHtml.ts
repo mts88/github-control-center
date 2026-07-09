@@ -143,9 +143,9 @@ const BASE_STYLE = `
   .merge-box ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
   .merge-box li { padding: 2px 0; color: var(--gr-muted); }
   .check-SUCCESS::before { content: "✓ "; color: var(--gr-green); }
-  .check-FAILURE::before, .check-ERROR::before, .check-TIMED_OUT::before, .check-STARTUP_FAILURE::before { content: "✗ "; color: var(--gr-red); }
-  .check-PENDING::before, .check-EXPECTED::before, .check-ACTION_REQUIRED::before { content: "● "; color: var(--vscode-charts-yellow, #d29922); }
-  .check-NEUTRAL::before, .check-SKIPPED::before, .check-CANCELLED::before { content: "○ "; color: var(--gr-muted); }
+  .check-FAILURE::before, .check-ERROR::before, .check-TIMED_OUT::before, .check-STARTUP_FAILURE::before, .check-CANCELLED::before, .check-ACTION_REQUIRED::before { content: "✗ "; color: var(--gr-red); }
+  .check-PENDING::before, .check-EXPECTED::before, .check-STALE::before { content: "● "; color: var(--vscode-charts-yellow, #d29922); }
+  .check-NEUTRAL::before, .check-SKIPPED::before { content: "○ "; color: var(--gr-muted); }
   .merge-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
   button, select {
@@ -308,9 +308,12 @@ function renderTimelineItem(item: IPrTimelineItem, prUrl: string, now: number): 
   </div>`;
 }
 
-// StatusContext states pass through toCheck verbatim (ERROR/EXPECTED); non-completed CheckRuns collapse to PENDING
-const FAILING_CHECK_STATES = new Set(["FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE"]);
-const IN_PROGRESS_CHECK_STATES = new Set(["PENDING", "EXPECTED", "ACTION_REQUIRED"]);
+// buckets mirror GitHub's own statusCheckRollup semantics (the same rollup the sidebar consumes):
+// cancelled/action-required block a merge as "not successful", stale awaits re-evaluation.
+// Green is NOT the default bucket — states outside both Sets render as in progress, so an
+// unknown/future GitHub state can never silently report "All checks passed".
+const FAILING_CHECK_STATES = new Set(["FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE", "CANCELLED", "ACTION_REQUIRED"]);
+const PASSED_CHECK_STATES = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 
 function renderMergeBox(details: IPrDetails, defaultUpdateMethod: UpdateBranchMethod): string {
   const decision = details.reviewDecision ? (REVIEW_DECISION_LABELS[details.reviewDecision] ?? details.reviewDecision) : "● No review required";
@@ -318,7 +321,7 @@ function renderMergeBox(details: IPrDetails, defaultUpdateMethod: UpdateBranchMe
 
   const truncatedChecksCount = details.checksTotal - details.checks.length;
   const failedChecksCount = details.checks.filter((check) => FAILING_CHECK_STATES.has(check.status)).length;
-  const inProgressChecksCount = details.checks.filter((check) => IN_PROGRESS_CHECK_STATES.has(check.status)).length;
+  const inProgressChecksCount = details.checks.filter((check) => !FAILING_CHECK_STATES.has(check.status) && !PASSED_CHECK_STATES.has(check.status)).length;
   let checksSummary: string;
   let checksClass: string;
   if (details.checks.length === 0) {

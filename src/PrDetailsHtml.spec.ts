@@ -287,16 +287,23 @@ describe("renderPrDetailsHtml", () => {
       expect(html).not.toContain("All checks passed");
     });
 
-    it("should count EXPECTED and ACTION_REQUIRED checks as in progress", () => {
+    it("should count EXPECTED and STALE checks as in progress", () => {
       const html = render({
         checks: [
           { name: "deploy", status: "EXPECTED" },
-          { name: "approval", status: "ACTION_REQUIRED" },
+          { name: "outdated", status: "STALE" },
         ],
         checksTotal: 2,
       });
 
       expect(html).toContain("2 checks in progress");
+    });
+
+    it("should treat unknown check states as in progress, never as passed", () => {
+      const html = render({ checks: [{ name: "future", status: "SOME_NEW_STATE" }], checksTotal: 1 });
+
+      expect(html).toContain("1 check in progress");
+      expect(html).not.toContain("All checks passed");
     });
 
     it("should prioritize failing checks over in-progress ones", () => {
@@ -324,8 +331,33 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain("2 failing checks");
     });
 
+    it("should count CANCELLED and ACTION_REQUIRED checks as failing, like GitHub's own rollup", () => {
+      const html = render({
+        checks: [
+          { name: "build", status: "CANCELLED" },
+          { name: "approval", status: "ACTION_REQUIRED" },
+        ],
+        checksTotal: 2,
+      });
+
+      expect(html).toContain("2 failing checks");
+      expect(html).not.toContain("All checks passed");
+    });
+
     it("should keep the all-passed summary when every check succeeded", () => {
       const html = render({ checks: [{ name: "build", status: "SUCCESS" }], checksTotal: 1 });
+
+      expect(html).toContain("All checks passed");
+    });
+
+    it("should keep the all-passed summary for neutral and skipped checks", () => {
+      const html = render({
+        checks: [
+          { name: "optional", status: "NEUTRAL" },
+          { name: "docs-only", status: "SKIPPED" },
+        ],
+        checksTotal: 2,
+      });
 
       expect(html).toContain("All checks passed");
     });
