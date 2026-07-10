@@ -41,6 +41,7 @@ const PR_FIELDS = `
     headRefOid
     author { login }
     repository { nameWithOwner }
+    viewerLatestReview { state }
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
   }
 `;
@@ -51,6 +52,9 @@ const SEARCH_QUERY = `
       nodes { ${PR_FIELDS} }
     }
     mine: search(query: "is:pr is:open archived:false author:@me", type: ISSUE, first: ${SEARCH_PAGE_SIZE}) {
+      nodes { ${PR_FIELDS} }
+    }
+    reviewed: search(query: "is:pr is:open archived:false reviewed-by:@me -author:@me", type: ISSUE, first: ${SEARCH_PAGE_SIZE}) {
       nodes { ${PR_FIELDS} }
     }
   }
@@ -69,6 +73,7 @@ interface IGraphQlPrNode {
   headRefOid: string;
   author: { login: string } | null;
   repository: { nameWithOwner: string };
+  viewerLatestReview: { state: string } | null;
   commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }> };
 }
 
@@ -304,10 +309,16 @@ export async function fetchFileContent(token: string, repo: string, path: string
 }
 
 export async function fetchPullRequests(token: string): Promise<IPrSnapshot> {
-  const data = await postGraphQl<{ toReview: { nodes: IGraphQlPrNode[] }; mine: { nodes: IGraphQlPrNode[] } }>(token, SEARCH_QUERY);
+  const data = await postGraphQl<{ toReview: { nodes: IGraphQlPrNode[] }; mine: { nodes: IGraphQlPrNode[] }; reviewed: { nodes: IGraphQlPrNode[] } }>(token, SEARCH_QUERY);
+  const toReview = toPullRequests(data.toReview.nodes);
+  const toReviewIds = new Set(toReview.map((pr) => pr.id));
   return {
-    toReview: toPullRequests(data.toReview.nodes),
+    toReview,
     mine: toPullRequests(data.mine.nodes),
+    // a re-requested PR matches both searches: the active request wins
+    reviewed: toPullRequests(data.reviewed.nodes)
+      .filter((pr) => !toReviewIds.has(pr.id))
+      .map((pr) => ({ ...pr, isReviewedByMe: true })),
   };
 }
 
@@ -637,6 +648,7 @@ function toPullRequest(node: IGraphQlPrNode & { id: string }): IPullRequest {
     createdAt: node.createdAt,
     ciState: toCiState(node.commits.nodes[0]?.commit.statusCheckRollup?.state),
     reviewDecision: node.reviewDecision,
+    viewerReviewState: node.viewerLatestReview?.state ?? null,
     headRefName: node.headRefName,
     baseRefOid: node.baseRefOid,
     headRefOid: node.headRefOid,

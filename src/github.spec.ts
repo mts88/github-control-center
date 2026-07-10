@@ -29,6 +29,7 @@ interface IGraphQlNodeOverrides {
   rollupState?: string | null;
   isDraft?: boolean;
   reviewDecision?: string | null;
+  viewerLatestReview?: { state: string } | null;
 }
 
 function buildNode(overrides: IGraphQlNodeOverrides = {}) {
@@ -45,6 +46,7 @@ function buildNode(overrides: IGraphQlNodeOverrides = {}) {
     headRefOid: "head-oid",
     author: overrides.author === undefined ? { login: "jane" } : overrides.author,
     repository: { nameWithOwner: "acme/repo" },
+    viewerLatestReview: overrides.viewerLatestReview ?? null,
     commits: {
       nodes: [{ commit: { statusCheckRollup: overrides.rollupState ? { state: overrides.rollupState } : null } }],
     },
@@ -62,8 +64,8 @@ function stubFetch(body: unknown, status = 200): void {
   );
 }
 
-function stubGraphQlData(toReviewNodes: unknown[], mineNodes: unknown[] = []): void {
-  stubFetch({ data: { toReview: { nodes: toReviewNodes }, mine: { nodes: mineNodes } } });
+function stubGraphQlData(toReviewNodes: unknown[], mineNodes: unknown[] = [], reviewedNodes: unknown[] = []): void {
+  stubFetch({ data: { toReview: { nodes: toReviewNodes }, mine: { nodes: mineNodes }, reviewed: { nodes: reviewedNodes } } });
 }
 
 describe("fetchPullRequests", () => {
@@ -89,6 +91,7 @@ describe("fetchPullRequests", () => {
         createdAt: "2026-07-01T00:00:00Z",
         ciState: "SUCCESS",
         reviewDecision: "APPROVED",
+        viewerReviewState: null,
         headRefName: "feature/thing",
         baseRefOid: "base-oid",
         headRefOid: "head-oid",
@@ -143,6 +146,47 @@ describe("fetchPullRequests", () => {
     const snapshot = await fetchPullRequests("token");
 
     expect(snapshot.toReview.map((pr) => pr.id)).toEqual(["PR_1"]);
+  });
+
+  describe("reviewed section", () => {
+    it("should map reviewed search results tagged with the viewer review state", async () => {
+      stubGraphQlData([], [], [buildNode({ id: "PR_9", viewerLatestReview: { state: "DISMISSED" } })]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.reviewed).toHaveLength(1);
+      expect(snapshot.reviewed[0]).toMatchObject({ id: "PR_9", viewerReviewState: "DISMISSED", isReviewedByMe: true });
+    });
+
+    it("should map a missing viewer review to a null state", async () => {
+      stubGraphQlData([], [], [buildNode({ id: "PR_9" })]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.reviewed[0].viewerReviewState).toBeNull();
+    });
+
+    it("should drop reviewed PRs that also carry an active review request", async () => {
+      stubGraphQlData(
+        [buildNode({ id: "PR_1" })],
+        [],
+        [buildNode({ id: "PR_1", viewerLatestReview: { state: "APPROVED" } }), buildNode({ id: "PR_2", viewerLatestReview: { state: "APPROVED" } })],
+      );
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.toReview.map((pr) => pr.id)).toEqual(["PR_1"]);
+      expect(snapshot.reviewed.map((pr) => pr.id)).toEqual(["PR_2"]);
+    });
+
+    it("should not tag toReview results as reviewed", async () => {
+      stubGraphQlData([buildNode({ id: "PR_1", viewerLatestReview: { state: "APPROVED" } })]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.toReview[0].isReviewedByMe).toBeUndefined();
+      expect(snapshot.toReview[0].viewerReviewState).toBe("APPROVED");
+    });
   });
 
   it("should throw when the HTTP response is not ok", async () => {

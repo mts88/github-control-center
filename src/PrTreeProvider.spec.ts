@@ -10,6 +10,8 @@ interface IPrOverrides {
   ciState?: CiState;
   createdAt?: string;
   reviewDecision?: string | null;
+  viewerReviewState?: string | null;
+  isReviewedByMe?: boolean;
 }
 
 function buildPr(overrides: IPrOverrides = {}): IPullRequest {
@@ -24,6 +26,8 @@ function buildPr(overrides: IPrOverrides = {}): IPullRequest {
     createdAt: overrides.createdAt ?? "2026-07-01T00:00:00Z",
     ciState: overrides.ciState ?? "NONE",
     reviewDecision: overrides.reviewDecision ?? null,
+    viewerReviewState: overrides.viewerReviewState ?? null,
+    isReviewedByMe: overrides.isReviewedByMe,
     headRefName: "feature/thing",
     baseRefOid: "base-oid",
     headRefOid: "head-oid",
@@ -147,6 +151,29 @@ describe("PrTreeProvider", () => {
 
       expect(item.label).toBe("A title");
       expect(item.tooltip).not.toContain("Review:");
+    });
+
+    describe("reviewed rows", () => {
+      it.each([
+        ["APPROVED", "you approved"],
+        ["DISMISSED", "review stale"],
+        ["CHANGES_REQUESTED", "you requested changes"],
+        ["COMMENTED", "you commented"],
+        ["PENDING", "reviewed"],
+        [null, "reviewed"],
+      ])("should describe a reviewed row with viewer state %s as '%s'", (viewerReviewState, expectedSuffix) => {
+        const item = getPrTreeItem(buildPr({ isReviewedByMe: true, viewerReviewState }));
+
+        expect(item.description).toContain(` · ${expectedSuffix}`);
+        expect(item.tooltip).toContain(`Your review: ${expectedSuffix}`);
+      });
+
+      it("should not decorate rows without the reviewed tag even when a viewer review state exists", () => {
+        const item = getPrTreeItem(buildPr({ viewerReviewState: "APPROVED" }));
+
+        expect(item.description).not.toContain("you approved");
+        expect(item.tooltip).not.toContain("Your review:");
+      });
     });
 
     describe("age in the description", () => {
