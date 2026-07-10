@@ -9,7 +9,7 @@ A VSCode extension built by developers, for developers — to keep your GitHub s
 
 ## Features
 
-- **Two views** in the activity bar container: **To Review** (PRs where your review is requested, including team requests) and **My PRs** (your open PRs), both grouped by repository. PRs you already reviewed stay in To Review after requested ones — labeled with your review state (approved, stale, changes requested) — until they close or your review is re-requested.
+- **Two views** in the activity bar container: **To Review** (PRs where your review is requested, including team requests) and **My PRs** (your open PRs), both grouped by repository. PRs you already reviewed stay in To Review after requested ones — labeled with your review state (approved, stale, changes requested, commented) — until they close or your review is re-requested.
 - **Badge count** on the activity bar icon, configurable per list.
 - **Toast notifications** when a new PR requests your review — and when one of your own PRs gets approved or receives a changes request — with quick actions (Open, Settings). Anti-spam by design: the first fetch after a reload never fires a storm.
 - **PR details panel**: click a PR to open a GitHub-like page — conversation timeline with rendered mermaid diagrams, merge box (review decision, checks, conflicts, out-of-date branch), reviewers, labels, aggregate diffstat — without leaving VSCode.
