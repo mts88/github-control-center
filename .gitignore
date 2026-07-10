@@ -10,8 +10,8 @@ dist/
 !.yarn/sdks
 !.yarn/versions
 
-# local plan/red-team reviews — never tracked
-docs/reviews/
+# local plans/red-team reviews — never tracked
+docs/
 
 # Claude Code worktrees — never tracked
 .claude/worktrees/
