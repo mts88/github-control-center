@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderPrDetailsHtml } from "./PrDetailsHtml";
-import type { IPrDetails } from "./types";
+import type { IBriefState, IPrDetails } from "./types";
 
 const NONCE = "test-nonce-123";
 const NOW = new Date("2026-07-08T12:00:00Z").getTime();
@@ -381,8 +381,18 @@ describe("renderPrDetailsHtml", () => {
       const html = render();
 
       expect(html).toContain('"acme/repo#42"');
-      expect(html).toContain("vscodeApi.setState({ prKey, scrollY: window.scrollY })");
+      expect(html).toContain("vscodeApi.setState({ prKey, scrollY: window.scrollY, briefCollapsed:");
       expect(html).toContain("vscodeApi.getState()");
+    });
+
+    it("should re-enable only the buttons the send freeze disabled, never designed-disabled ones", () => {
+      const html = render();
+
+      // send() records the buttons it disables; reenable restores exactly that set, so a
+      // brief button rendered disabled (pending/done) stays disabled after a cancelled action
+      expect(html).toContain("frozenButtons = allButtons.filter((button) => !button.disabled)");
+      expect(html).toContain("frozenButtons.forEach((button) => { button.disabled = false; })");
+      expect(html).not.toContain("allButtons.forEach((button) => { button.disabled = false; })");
     });
   });
 
@@ -429,6 +439,142 @@ describe("renderPrDetailsHtml", () => {
 
       expect(html).not.toContain("#not-a-color");
       expect(html).toContain(">odd</span>");
+    });
+  });
+
+  describe("brief section", () => {
+    function renderWithBrief(brief: IBriefState): string {
+      return renderPrDetailsHtml(buildDetails(), NONCE, NOW, undefined, "REBASE", brief);
+    }
+
+    it("should render neither button nor section when no brief state is passed", () => {
+      const html = render();
+
+      expect(html).not.toContain('id="brief"');
+      expect(html).not.toContain("Summary</summary>");
+    });
+
+    it("should render the button but no section when idle", () => {
+      const html = renderWithBrief({ status: "idle" });
+
+      expect(html).toContain('id="brief"');
+      expect(html).not.toContain("Summary</summary>");
+    });
+
+    it("should render neither button nor section when unavailable", () => {
+      const html = renderWithBrief({ status: "unavailable" });
+
+      expect(html).not.toContain('id="brief"');
+    });
+
+    it("should show a progress message and a disabled button while pending", () => {
+      const html = renderWithBrief({ status: "pending" });
+
+      expect(html).toContain("Summarizing");
+      expect(html).toMatch(/id="brief"[^>]*disabled/);
+    });
+
+    it("should disable the button once a brief exists for the current head commit", () => {
+      const html = renderWithBrief({ status: "done", text: "Summary" });
+
+      expect(html).toMatch(/id="brief"[^>]*disabled/);
+    });
+
+    it("should keep the button enabled after an error so the user can retry", () => {
+      const html = renderWithBrief({ status: "error", text: "boom" });
+
+      expect(html).not.toMatch(/id="brief"[^>]*disabled/);
+    });
+
+    it("should render the summary as escaped plain text so model output stays inert", () => {
+      const html = renderWithBrief({ status: "done", text: 'Summary <script>alert("x")</script>' });
+
+      expect(html).toContain("brief-section");
+      expect(html).toContain("Summary &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+      expect(html).not.toContain('<script>alert("x")</script>');
+    });
+
+    it("should format '## ' lines as headings and '- ' lines as list items", () => {
+      const html = renderWithBrief({ status: "done", text: "## What changed\n- added a thing\n- removed a thing\n## Risk areas\n- none" });
+
+      expect(html).toContain('<div class="brief-heading">What changed</div>');
+      expect(html).toContain("<li>added a thing</li>");
+      expect(html).toContain("<ul><li>added a thing</li><li>removed a thing</li></ul>");
+      expect(html).toContain('<div class="brief-heading">Risk areas</div>');
+    });
+
+    it("should escape model output inside headings and bullets", () => {
+      const html = renderWithBrief({ status: "done", text: '## <b>bold</b>\n- <script>alert("x")</script>' });
+
+      expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
+      expect(html).toContain("<li>&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;</li>");
+      expect(html).not.toContain('<script>alert("x")</script>');
+    });
+
+    it("should render lines without a marker as paragraphs", () => {
+      const html = renderWithBrief({ status: "done", text: "plain intro line" });
+
+      expect(html).toContain("<p>plain intro line</p>");
+    });
+
+    it("should format numbered lines as an ordered list", () => {
+      const html = renderWithBrief({ status: "done", text: "## Suggested reading order\n1. read this\n2. then that" });
+
+      expect(html).toContain("<ol><li>read this</li><li>then that</li></ol>");
+    });
+
+    it("should render backtick spans as inline code", () => {
+      const html = renderWithBrief({ status: "done", text: "- `listenWhen` now skips `deeplink` sources" });
+
+      expect(html).toContain("<li><code>listenWhen</code> now skips <code>deeplink</code> sources</li>");
+    });
+
+    it("should keep escaping markup inside backtick spans", () => {
+      const html = renderWithBrief({ status: "done", text: "- run `<script>alert(1)</script>` now" });
+
+      expect(html).toContain("<code>&lt;script&gt;alert(1)&lt;/script&gt;</code>");
+      expect(html).not.toContain("<script>alert(1)</script>");
+    });
+
+    it("should leave an unpaired backtick as literal text", () => {
+      const html = renderWithBrief({ status: "done", text: "- a stray ` backtick" });
+
+      expect(html).toContain("<li>a stray ` backtick</li>");
+    });
+
+    it("should render the summary as a collapsible section, open by default", () => {
+      const html = renderWithBrief({ status: "done", text: "Summary" });
+
+      expect(html).toContain("<details open");
+      expect(html).toContain("Summary</summary>");
+    });
+
+    it("should show the provider avatar in the gutter like the timeline boxes", () => {
+      const html = renderWithBrief({ status: "done", text: "Summary" });
+
+      expect(html).toContain('class="avatar brief-avatar"');
+      expect(html).toContain("<svg");
+    });
+
+    it("should place the button in its own actions row below the state pill", () => {
+      const html = renderWithBrief({ status: "idle" });
+
+      expect(html).toContain('class="header-actions"');
+      expect(html.indexOf('class="header-actions"')).toBeGreaterThan(html.indexOf('class="merge-sentence"'));
+      expect(html.indexOf('id="brief"')).toBeLessThan(html.indexOf('class="layout"'));
+    });
+
+    it("should render no actions row when there is no brief state", () => {
+      const html = render();
+
+      expect(html).not.toContain('class="header-actions"');
+    });
+
+    it("should render errors inside the section", () => {
+      const html = renderWithBrief({ status: "error", text: "Claude CLI failed: run /login" });
+
+      expect(html).toContain("brief-error");
+      expect(html).toContain("Claude CLI failed: run /login");
     });
   });
 });

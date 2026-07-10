@@ -196,77 +196,164 @@
         "command": "githubControlCenter.manageMutedRepos",
         "title": "Manage Muted Repositories",
         "category": "GitHub Control Center"
+      },
+      {
+        "command": "githubControlCenter.clearBriefCache",
+        "title": "Clear AI Brief Cache",
+        "category": "GitHub Control Center"
       }
     ],
-    "configuration": {
-      "title": "GitHub Control Center",
-      "properties": {
-        "githubControlCenter.badge.countToReview": {
-          "type": "boolean",
-          "default": true,
-          "description": "Include PRs waiting for your review in the activity bar badge count."
-        },
-        "githubControlCenter.badge.countMine": {
-          "type": "boolean",
-          "default": false,
-          "description": "Include your own open PRs in the activity bar badge count."
-        },
-        "githubControlCenter.badge.countReviewed": {
-          "type": "boolean",
-          "default": false,
-          "description": "Include PRs you already reviewed (no active re-request) in the activity bar badge count. Off by default: only PRs actually waiting on you count. Has no effect while toReview.hideReviewed is on (hidden PRs are never counted)."
-        },
-        "githubControlCenter.notifications.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show VSCode notifications for new review requests and for review outcomes (approved / changes requested) on your own PRs."
-        },
-        "githubControlCenter.mutedRepos": {
-          "type": "array",
-          "items": {
-            "type": "string"
+    "configuration": [
+      {
+        "title": "Badge & Notifications",
+        "order": 1,
+        "properties": {
+          "githubControlCenter.badge.countToReview": {
+            "type": "boolean",
+            "default": true,
+            "order": 1,
+            "description": "Include PRs waiting for your review in the activity bar badge count."
           },
-          "default": [],
-          "markdownDescription": "Entries to hide from both lists, the badge, and notifications: `owner/repo` mutes a repository, `owner` (or `owner/*`) mutes a whole organization. Tip: use the **GitHub Control Center: Manage Muted Repositories** command for a searchable picker."
-        },
-        "githubControlCenter.toReview.hideDrafts": {
-          "type": "boolean",
-          "default": false,
-          "description": "Hide draft PRs from the To Review list, the badge, and notifications."
-        },
-        "githubControlCenter.toReview.hideReviewed": {
-          "type": "boolean",
-          "default": false,
-          "description": "Hide open PRs you already reviewed (approved, stale, or changes requested) from the To Review list while they wait for a re-request."
-        },
-        "githubControlCenter.updateBranch.defaultMethod": {
-          "type": "string",
-          "enum": [
-            "REBASE",
-            "MERGE"
-          ],
-          "enumDescriptions": [
-            "Update with rebase (force-pushes the PR branch)",
-            "Update with a merge commit"
-          ],
-          "default": "REBASE",
-          "description": "Method preselected for the Update branch action in the PR details panel."
-        },
-        "githubControlCenter.files.layout": {
-          "type": "string",
-          "enum": [
-            "tree",
-            "flat"
-          ],
-          "enumDescriptions": [
-            "Directory hierarchy with compacted single-child folders",
-            "Flat file list with the directory shown next to each name"
-          ],
-          "default": "tree",
-          "description": "How a pull request's changed files are laid out under its row."
+          "githubControlCenter.badge.countMine": {
+            "type": "boolean",
+            "default": false,
+            "order": 2,
+            "description": "Include your own open PRs in the activity bar badge count."
+          },
+          "githubControlCenter.badge.countReviewed": {
+            "type": "boolean",
+            "default": false,
+            "order": 3,
+            "description": "Include PRs you already reviewed (no active re-request) in the activity bar badge count. Off by default: only PRs actually waiting on you count. Has no effect while toReview.hideReviewed is on (hidden PRs are never counted)."
+          },
+          "githubControlCenter.notifications.enabled": {
+            "type": "boolean",
+            "default": true,
+            "order": 4,
+            "description": "Show VSCode notifications for new review requests and for review outcomes (approved / changes requested) on your own PRs."
+          }
+        }
+      },
+      {
+        "title": "Filtering",
+        "order": 2,
+        "properties": {
+          "githubControlCenter.mutedRepos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "order": 1,
+            "markdownDescription": "Entries to hide from both lists, the badge, and notifications: `owner/repo` mutes a repository, `owner` (or `owner/*`) mutes a whole organization. Tip: use the **GitHub Control Center: Manage Muted Repositories** command for a searchable picker."
+          },
+          "githubControlCenter.toReview.hideDrafts": {
+            "type": "boolean",
+            "default": false,
+            "order": 2,
+            "description": "Hide draft PRs from the To Review list, the badge, and notifications."
+          },
+          "githubControlCenter.toReview.hideReviewed": {
+            "type": "boolean",
+            "default": false,
+            "order": 3,
+            "description": "Hide open PRs you already reviewed (approved, stale, or changes requested) from the To Review list while they wait for a re-request."
+          }
+        }
+      },
+      {
+        "title": "Pull Requests",
+        "order": 3,
+        "properties": {
+          "githubControlCenter.updateBranch.defaultMethod": {
+            "type": "string",
+            "enum": [
+              "REBASE",
+              "MERGE"
+            ],
+            "enumDescriptions": [
+              "Update with rebase (force-pushes the PR branch)",
+              "Update with a merge commit"
+            ],
+            "default": "REBASE",
+            "order": 1,
+            "description": "Method preselected for the Update branch action in the PR details panel."
+          },
+          "githubControlCenter.files.layout": {
+            "type": "string",
+            "enum": [
+              "tree",
+              "flat"
+            ],
+            "enumDescriptions": [
+              "Directory hierarchy with compacted single-child folders",
+              "Flat file list with the directory shown next to each name"
+            ],
+            "default": "tree",
+            "order": 2,
+            "description": "How a pull request's changed files are laid out under its row."
+          }
+        }
+      },
+      {
+        "title": "AI",
+        "order": 4,
+        "properties": {
+          "githubControlCenter.ai.backend": {
+            "type": "string",
+            "enum": [
+              "claude-code"
+            ],
+            "enumItemLabels": [
+              "Claude Code"
+            ],
+            "enumDescriptions": [
+              "The Claude Code CLI in headless mode, using your existing Claude subscription"
+            ],
+            "default": "claude-code",
+            "order": 1,
+            "description": "Which local AI backend powers the AI features (PR brief). More backends may be added over time."
+          },
+          "githubControlCenter.ai.language": {
+            "type": "string",
+            "default": "English",
+            "order": 2,
+            "description": "Language AI-generated content (the PR brief) is written in, regardless of the AI backend in use."
+          },
+          "githubControlCenter.ai.claude.command": {
+            "type": "string",
+            "default": "claude",
+            "scope": "machine",
+            "order": 3,
+            "description": "Path to the Claude Code CLI. Used only when the AI backend is Claude Code. Machine-scoped: a workspace cannot override it. AI features stay hidden when the binary is not found."
+          },
+          "githubControlCenter.ai.claude.model": {
+            "type": "string",
+            "enum": [
+              "sonnet",
+              "haiku",
+              "opus",
+              ""
+            ],
+            "enumItemLabels": [
+              "Sonnet",
+              "Haiku",
+              "Opus",
+              "CLI default"
+            ],
+            "enumDescriptions": [
+              "Fast and balanced — recommended for PR briefs",
+              "Fastest and cheapest",
+              "Most capable, slower and more expensive",
+              "Whatever the Claude CLI is configured to use"
+            ],
+            "default": "sonnet",
+            "order": 4,
+            "description": "Model passed to `claude --model`. Used only when the AI backend is Claude Code."
+          }
         }
       }
-    },
+    ],
     "menus": {
       "view/title": [
         {

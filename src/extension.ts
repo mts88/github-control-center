@@ -21,6 +21,9 @@ import {
   updatePrBranch,
 } from "./github";
 import { ReviewController, type IPatchKey } from "./ReviewController";
+import { detectAi, runAiPrompt } from "./ai";
+import { buildBriefPrompt, buildBriefSystemPrompt } from "./briefPrompt";
+import { BriefStore, type PersistedBrief } from "./briefState";
 import { toThreadPosition } from "./reviewThreads";
 import { applyFilters } from "./filters";
 import { NewPrTracker } from "./NewPrTracker";
@@ -31,11 +34,16 @@ import { formatPrTabTitle, PrDetailsPanel, type IPanelMessage } from "./PrDetail
 import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./PrTreeProvider";
 import { PR_URI_SCHEME } from "./prUri";
 import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
-import type { IPrDetails, IPrFile, IPrFilePatch, IPullRequest } from "./types";
+import type { IBriefState, IPrDetails, IPrFile, IPrFilePatch, IPullRequest } from "./types";
 
 const POLL_INTERVAL_MS = 150_000;
 // GitHub reads lag behind writes: one delayed catch-up refresh after each successful mutation
 const POST_MUTATION_REFRESH_DELAY_MS = 3_000;
+const BRIEF_CACHE_STATE_KEY = "githubControlCenter.briefCache";
+// config sections that feed the poll pipeline: an event touching only ai.* keys skips the poll
+const NON_AI_SECTIONS = ["badge", "notifications", "mutedRepos", "toReview", "updateBranch", "files"].map(
+  (section) => `githubControlCenter.${section}`,
+);
 
 // minimal typed surface of the built-in vscode.git extension API
 interface IGitRemote {
@@ -301,7 +309,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const reviewDecisionTracker = new ReviewDecisionTracker();
   const detailsPanel = new PrDetailsPanel(context.extensionUri);
   let currentDetailsPr: IPullRequest | undefined;
-  let currentDetails: IPrDetails | undefined;
+  // paired with the PR they belong to: currentDetailsPr moves at click time while the fetch is
+  // still in flight, so anything combining details with PR data must check the prId matches
+  let currentDetails: { prId: string; details: IPrDetails } | undefined;
+  // JSON of the brief state last drawn into the panel: silent refreshes redraw when either
+  // the details or the brief changed — comparing details alone would strand a finished brief
+  let lastRenderedBrief: string | undefined;
   let detailsRequestSequence = 0;
   let mutationInFlight = false;
   // background refreshes are skipped while a draft comment sits in the composer:
@@ -310,6 +323,55 @@ export function activate(context: vscode.ExtensionContext): void {
   let postMutationTimer: ReturnType<typeof setTimeout> | undefined;
   // repos seen in the last raw snapshot (pre-filter, so muted ones stay unmutable from the picker)
   let knownRepos = new Set<string>();
+  // AI brief state: features hide entirely when the claude CLI is not on this machine
+  let aiAvailable = false;
+  // only the newest detection may write aiAvailable: a slow stale probe must never overwrite
+  // the result of a newer config (same pattern as detailsRequestSequence below)
+  let aiDetectSequence = 0;
+  // results are pinned to the head oid — a push invalidates naturally. Hydrated from globalState
+  // so a window reload keeps the briefs — local only (never setKeysForSync: PR content)
+  const briefStore = new BriefStore(context.globalState.get<PersistedBrief[]>(BRIEF_CACHE_STATE_KEY, []));
+
+  function persistBriefs(): void {
+    void context.globalState.update(BRIEF_CACHE_STATE_KEY, briefStore.serialize());
+  }
+
+  function aiConfig(): { backend: string; command: string; model: string; language: string } {
+    const config = vscode.workspace.getConfiguration("githubControlCenter");
+    return {
+      backend: config.get<string>("ai.backend", "claude-code"),
+      command: config.get<string>("ai.claude.command", "claude"),
+      model: config.get<string>("ai.claude.model", "sonnet"),
+      language: config.get<string>("ai.language", "English"),
+    };
+  }
+
+  function refreshAiAvailability(): void {
+    const config = aiConfig();
+    const requestId = ++aiDetectSequence;
+    // only claude-code exists today; the gate keeps a future backend (#19) from
+    // silently running through the claude path
+    if (config.backend !== "claude-code") {
+      aiAvailable = false;
+      return;
+    }
+    void detectAi(config.command).then((available) => {
+      if (requestId !== aiDetectSequence) {
+        return; // a newer detection (or a backend switch) owns the flag now
+      }
+      aiAvailable = available;
+      if (currentDetailsPr) {
+        rerenderBriefFor(currentDetailsPr.id); // the open panel reflects the new availability
+      }
+    });
+  }
+
+  function currentBriefState(pr: IPullRequest): IBriefState | undefined {
+    if (!aiAvailable) {
+      return undefined;
+    }
+    return briefStore.getState(pr.id, pr.headRefOid);
+  }
 
   function openPr(target: string | TreeNode): void {
     // string from the webview flow, TreeNode when invoked from the inline tree icon
@@ -335,8 +397,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const details = await fetchPrDetails(session.accessToken, pr.id, pr.headRefName);
       if (requestId === detailsRequestSequence) {
-        currentDetails = details;
-        detailsPanel.showDetails(details);
+        presentDetails(pr, details, "reveal");
       }
     } catch (error) {
       if (requestId === detailsRequestSequence) {
@@ -345,12 +406,31 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  // the single exit point for rendering the panel: it keeps details paired with their PR and
+  // records the drawn brief state so silent refreshes can tell when a redraw is actually needed
+  function presentDetails(pr: IPullRequest, details: IPrDetails, mode: "reveal" | "silent"): void {
+    const brief = currentBriefState(pr);
+    currentDetails = { prId: pr.id, details };
+    lastRenderedBrief = JSON.stringify(brief);
+    if (mode === "reveal") {
+      detailsPanel.showDetails(details, brief);
+    } else {
+      detailsPanel.updateDetails(details, brief);
+    }
+  }
+
+  // one shared guard for every silent re-render: never a hidden panel, never during a
+  // mutation, never over a composer draft (a full HTML replace would wipe it)
+  function canSilentlyUpdatePanel(): boolean {
+    return detailsPanel.isVisible && !mutationInFlight && !composerHasText;
+  }
+
   // background counterpart of openPrDetails, run on every poll cycle: it reads the request
   // sequence without bumping it (a user click mid-fetch always wins), never reveals the panel,
   // and failures stay silent — the last good render must survive (same philosophy as the poll)
   async function refreshOpenDetails(): Promise<void> {
     const pr = currentDetailsPr;
-    if (!pr || !detailsPanel.isVisible || mutationInFlight || composerHasText) {
+    if (!pr || !canSilentlyUpdatePanel()) {
       return;
     }
     const requestId = detailsRequestSequence;
@@ -360,16 +440,66 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     try {
       const details = await fetchPrDetails(session.accessToken, pr.id, pr.headRefName);
-      if (requestId !== detailsRequestSequence || mutationInFlight || composerHasText) {
+      if (requestId !== detailsRequestSequence || !canSilentlyUpdatePanel()) {
         return;
       }
-      if (JSON.stringify(details) === JSON.stringify(currentDetails)) {
+      const detailsUnchanged = JSON.stringify(details) === JSON.stringify(currentDetails?.details);
+      const briefUnchanged = JSON.stringify(currentBriefState(pr)) === lastRenderedBrief;
+      if (detailsUnchanged && briefUnchanged) {
         return; // unchanged snapshot: skip the re-render, a full HTML replace resets the scroll
       }
-      currentDetails = details;
-      detailsPanel.updateDetails(details);
+      presentDetails(pr, details, "silent");
     } catch (error) {
       output.appendLine(`[${new Date().toISOString()}] Details refresh failed: ${toErrorMessage(error)}`);
+    }
+  }
+
+  // re-render carrying the current brief state, under the same guards as refreshOpenDetails:
+  // never another PR's panel, never over a composer draft, never during a mutation
+  function rerenderBriefFor(prId: string): void {
+    const pr = currentDetailsPr;
+    if (!pr || pr.id !== prId || !currentDetails || currentDetails.prId !== pr.id) {
+      return;
+    }
+    if (!canSilentlyUpdatePanel()) {
+      // the summary waits in the cache. Never unfreeze mid-mutation: the webview would
+      // accept a second merge click while the first is still executing
+      if (!mutationInFlight) {
+        detailsPanel.reenableActions();
+      }
+      return;
+    }
+    if (JSON.stringify(currentBriefState(pr)) === lastRenderedBrief) {
+      return; // nothing new to draw: an identical full re-render would only reset the scroll
+    }
+    presentDetails(pr, currentDetails.details, "silent");
+  }
+
+  async function handleBriefRequest(pr: IPullRequest): Promise<void> {
+    const details = currentDetails;
+    // details must belong to the requesting PR: a brief click racing a PR switch would
+    // otherwise mix one PR's description with another's patches and cache the result
+    if (!aiAvailable || !details || details.prId !== pr.id || briefStore.isPending(pr.id)) {
+      return;
+    }
+    if (briefStore.hasSummary(pr.id, pr.headRefOid)) {
+      rerenderBriefFor(pr.id); // cache hit: instant, no CLI run, no quota burned
+      return;
+    }
+    briefStore.begin(pr.id, pr.headRefOid);
+    rerenderBriefFor(pr.id); // shows "Summarizing…"
+    try {
+      const [files, patches] = await Promise.all([loadPrFiles(pr), ensurePatches(pr)]);
+      const config = aiConfig();
+      const prompt = buildBriefPrompt(details.details, files, patches);
+      const summary = await runAiPrompt(config.command, config.model, buildBriefSystemPrompt(config.language), prompt);
+      briefStore.complete(pr.id, pr.headRefOid, summary);
+      persistBriefs();
+    } catch (error) {
+      briefStore.fail(pr.id, pr.headRefOid, toErrorMessage(error));
+      output.appendLine(`[${new Date().toISOString()}] Brief failed: ${toErrorMessage(error)}`);
+    } finally {
+      rerenderBriefFor(pr.id);
     }
   }
 
@@ -434,14 +564,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     if (message.command === "merge") {
-      // never trust the webview: the method must be one the repo actually allows
-      const isAllowedMethod = currentDetails?.mergeMethods.includes(message.method) ?? false;
-      if (!isAllowedMethod) {
+      // never trust the webview: the method must be one the repo actually allows, and the
+      // details it is validated against must belong to this PR (not a mid-switch leftover)
+      const openDetails = currentDetails?.prId === pr.id ? currentDetails.details : undefined;
+      const isAllowedMethod = openDetails?.mergeMethods.includes(message.method) ?? false;
+      if (!openDetails || !isAllowedMethod) {
         detailsPanel.reenableActions();
         return;
       }
       const methodLabel = MERGE_METHOD_LABELS[message.method];
-      const confirmation = await vscode.window.showWarningMessage(`${methodLabel}: "${pr.title}" into ${currentDetails?.baseRefName}?`, { modal: true }, "Merge");
+      const confirmation = await vscode.window.showWarningMessage(`${methodLabel}: "${pr.title}" into ${openDetails.baseRefName}?`, { modal: true }, "Merge");
       if (confirmation !== "Merge") {
         detailsPanel.reenableActions();
         return;
@@ -467,23 +599,29 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
+    if (message.command === "brief") {
+      await handleBriefRequest(pr);
+      return;
+    }
+
     if (message.command === "checkout") {
       await checkoutPrBranch();
     }
   }
 
   async function checkoutPrBranch(): Promise<void> {
-    if (!currentDetails) {
+    const details = currentDetails?.details;
+    if (!details) {
       detailsPanel.reenableActions();
       return;
     }
-    if (currentDetails.headRepo !== currentDetails.repo) {
+    if (details.headRepo !== details.repo) {
       // ponytail: cross-fork checkout needs pull/N/head refspecs — use GitHub until it hurts
       void vscode.window.showErrorMessage("Checkout of cross-fork PRs is not supported. Open the PR on GitHub instead.");
       detailsPanel.reenableActions();
       return;
     }
-    await checkoutBranch(currentDetails.repo, currentDetails.headRefName);
+    await checkoutBranch(details.repo, details.headRefName);
     detailsPanel.reenableActions();
   }
 
@@ -660,7 +798,14 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     try {
       const snapshot = await fetchPullRequests(session.accessToken);
-      knownRepos = new Set([...snapshot.toReview, ...snapshot.mine, ...snapshot.reviewed].map((pr) => pr.repo));
+      const allPrs = [...snapshot.toReview, ...snapshot.mine, ...snapshot.reviewed];
+      knownRepos = new Set(allPrs.map((pr) => pr.repo));
+      // re-point the open-panel PR at the fresh snapshot entry (raw, pre-filter): without this,
+      // headRefOid freezes at click time and a push would keep serving the stale brief cache key
+      if (currentDetailsPr) {
+        const openPrId = currentDetailsPr.id;
+        currentDetailsPr = allPrs.find((pr) => pr.id === openPrId) ?? currentDetailsPr;
+      }
       const config = vscode.workspace.getConfiguration("githubControlCenter");
       // filters run before providers, badge and trackers: lists, badge and toasts must always agree
       const visibleSnapshot = applyFilters(snapshot, {
@@ -735,6 +880,15 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showInformationMessage(`Muted everything from ${organization}`);
     }),
     vscode.commands.registerCommand("githubControlCenter.manageMutedRepos", manageMutedRepos),
+    // escape hatch for regenerating briefs: prompt/language changes don't touch the cache key
+    vscode.commands.registerCommand("githubControlCenter.clearBriefCache", () => {
+      briefStore.clearResults();
+      persistBriefs();
+      if (currentDetailsPr) {
+        rerenderBriefFor(currentDetailsPr.id);
+      }
+      void vscode.window.showInformationMessage("AI brief cache cleared.");
+    }),
     vscode.commands.registerCommand("githubControlCenter.openPrDetails", (pr: IPullRequest) => void openPrDetails(pr)),
     vscode.workspace.registerTextDocumentContentProvider(PR_URI_SCHEME, contentProvider),
     vscode.commands.registerCommand("githubControlCenter.openFileDiff", (node: IFileNode) => void openFileDiff(node)),
@@ -765,14 +919,25 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("githubControlCenter")) {
-        publishFilesLayoutContext();
-        void refresh();
+      if (!event.affectsConfiguration("githubControlCenter")) {
+        return;
       }
+      if (event.affectsConfiguration("githubControlCenter.ai")) {
+        refreshAiAvailability();
+        // ai keys cannot affect PR data: skip the GitHub poll unless the same event
+        // also touched settings the poll pipeline actually reads
+        const touchesPollSettings = NON_AI_SECTIONS.some((section) => event.affectsConfiguration(section));
+        if (!touchesPollSettings) {
+          return;
+        }
+      }
+      publishFilesLayoutContext();
+      void refresh();
     }),
   );
 
   publishFilesLayoutContext();
+  refreshAiAvailability();
 
   void refresh();
 }

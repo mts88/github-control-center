@@ -107,6 +107,12 @@ export interface IPrTimelineItem {
   codeCommentsCount?: number;
 }
 
+export interface IBriefState {
+  status: "unavailable" | "idle" | "pending" | "done" | "error";
+  /** summary text when done, error message when error */
+  text?: string;
+}
+
 export interface IPrDetails {
   number: number;
   title: string;

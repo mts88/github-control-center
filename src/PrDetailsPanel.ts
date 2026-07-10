@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { renderMessageHtml, renderPrDetailsHtml } from "./PrDetailsHtml";
-import type { IPrDetails, MergeMethod, UpdateBranchMethod } from "./types";
+import type { IBriefState, IPrDetails, MergeMethod, UpdateBranchMethod } from "./types";
 
 export type IPanelMessage =
   | { command: "comment"; text: string }
@@ -9,6 +9,7 @@ export type IPanelMessage =
   | { command: "readyForReview" }
   | { command: "updateBranch"; method: UpdateBranchMethod }
   | { command: "checkout" }
+  | { command: "brief" }
   | { command: "composerState"; hasText: boolean };
 
 export function formatPrTabTitle(pr: { repo: string; title: string; number: number }): string {
@@ -33,15 +34,15 @@ export class PrDetailsPanel {
     this.render(title, renderMessageHtml(message, crypto.randomUUID()));
   }
 
-  showDetails(details: IPrDetails): void {
+  showDetails(details: IPrDetails, brief?: IBriefState): void {
     const panel = this.ensurePanel(formatPrTabTitle(details));
-    this.renderDetails(panel, details);
+    this.renderDetails(panel, details, brief);
   }
 
   // background variant of showDetails: never creates the panel, never reveals it
-  updateDetails(details: IPrDetails): void {
+  updateDetails(details: IPrDetails, brief?: IBriefState): void {
     if (this.panel) {
-      this.renderDetails(this.panel, details);
+      this.renderDetails(this.panel, details, brief);
     }
   }
 
@@ -57,13 +58,13 @@ export class PrDetailsPanel {
     this.panel?.dispose();
   }
 
-  private renderDetails(panel: vscode.WebviewPanel, details: IPrDetails): void {
+  private renderDetails(panel: vscode.WebviewPanel, details: IPrDetails, brief?: IBriefState): void {
     const mermaidScriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", "mermaid.min.js")).toString();
     const defaultUpdateMethod = vscode.workspace
       .getConfiguration("githubControlCenter")
       .get<UpdateBranchMethod>("updateBranch.defaultMethod", "REBASE");
     panel.title = formatPrTabTitle(details);
-    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod);
+    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod, brief);
   }
 
   private render(title: string, html: string): void {
