@@ -214,7 +214,7 @@
         "githubControlCenter.badge.countReviewed": {
           "type": "boolean",
           "default": false,
-          "description": "Include PRs you already reviewed (no active re-request) in the activity bar badge count. Off by default: only PRs actually waiting on you count."
+          "description": "Include PRs you already reviewed (no active re-request) in the activity bar badge count. Off by default: only PRs actually waiting on you count. Has no effect while toReview.hideReviewed is on (hidden PRs are never counted)."
         },
         "githubControlCenter.notifications.enabled": {
           "type": "boolean",

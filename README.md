@@ -9,7 +9,7 @@ A VSCode extension built by developers, for developers — to keep your GitHub s
 
 ## Features
 
-- **Two views** in the activity bar container: **To Review** (PRs where your review is requested, including team requests) and **My PRs** (your open PRs), both grouped by repository.
+- **Two views** in the activity bar container: **To Review** (PRs where your review is requested, including team requests) and **My PRs** (your open PRs), both grouped by repository. PRs you already reviewed stay in To Review after requested ones — labeled with your review state (approved, stale, changes requested) — until they close or your review is re-requested.
 - **Badge count** on the activity bar icon, configurable per list.
 - **Toast notifications** when a new PR requests your review — and when one of your own PRs gets approved or receives a changes request — with quick actions (Open, Settings). Anti-spam by design: the first fetch after a reload never fires a storm.
 - **PR details panel**: click a PR to open a GitHub-like page — conversation timeline with rendered mermaid diagrams, merge box (review decision, checks, conflicts, out-of-date branch), reviewers, labels, aggregate diffstat — without leaving VSCode.
@@ -29,9 +29,11 @@ The extension uses VSCode's GitHub authentication provider with the `repo` and `
 | --- | --- | --- |
 | `githubControlCenter.badge.countToReview` | `true` | Include PRs waiting for your review in the badge count. |
 | `githubControlCenter.badge.countMine` | `false` | Include your own open PRs in the badge count. |
+| `githubControlCenter.badge.countReviewed` | `false` | Include PRs you already reviewed (no active re-request) in the badge count. Has no effect while `toReview.hideReviewed` is on. |
 | `githubControlCenter.notifications.enabled` | `true` | Show notifications for new review requests and for review outcomes on your own PRs. |
 | `githubControlCenter.mutedRepos` | `[]` | Entries hidden from lists, badge, and notifications: `owner/repo` for one repository, `owner` (or `owner/*`) for a whole organization. Best edited via the **Manage Muted Repositories** command (searchable picker). |
 | `githubControlCenter.toReview.hideDrafts` | `false` | Hide draft PRs from the To Review list, badge, and notifications. |
+| `githubControlCenter.toReview.hideReviewed` | `false` | Hide open PRs you already reviewed from the To Review list while they wait for a re-request. |
 | `githubControlCenter.updateBranch.defaultMethod` | `REBASE` | Method preselected for the Update branch action (`REBASE` or `MERGE`). |
 | `githubControlCenter.files.layout` | `tree` | How a PR's changed files are laid out under its row: `tree` (directory hierarchy, compacted single-child folders) or `flat` (plain list). Also toggled from the `…` menu of either view. |
 
