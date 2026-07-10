@@ -40,6 +40,18 @@ const REVIEW_GLYPHS: Record<string, string> = {
   REVIEW_REQUIRED: "●",
 };
 
+const VIEWER_REVIEW_LABELS: Record<string, string> = {
+  APPROVED: "you approved",
+  DISMISSED: "review stale",
+  CHANGES_REQUESTED: "you requested changes",
+  COMMENTED: "you commented",
+};
+
+function toViewerReviewLabel(viewerReviewState: string | null): string {
+  // total mapping: unknown states (e.g. PENDING) and null fall back to a generic label
+  return (viewerReviewState && VIEWER_REVIEW_LABELS[viewerReviewState]) || "reviewed";
+}
+
 const CI_ICONS: Record<CiState, vscode.ThemeIcon> = {
   SUCCESS: new vscode.ThemeIcon("pass", new vscode.ThemeColor("testing.iconPassed")),
   FAILURE: new vscode.ThemeIcon("error", new vscode.ThemeColor("testing.iconFailed")),
@@ -163,9 +175,10 @@ function toPrTreeItem(pr: IPullRequest): vscode.TreeItem {
   const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
   // stable id: keeps the node's expansion state across the poll's full-tree refresh
   item.id = pr.id;
-  item.description = `${pr.author} · ${formatAge(pr.createdAt)}`;
+  const viewerReviewLabel = pr.isReviewedByMe ? toViewerReviewLabel(pr.viewerReviewState) : undefined;
+  item.description = `${pr.author} · ${formatAge(pr.createdAt)}${viewerReviewLabel ? ` · ${viewerReviewLabel}` : ""}`;
   item.iconPath = pr.isDraft ? new vscode.ThemeIcon("git-pull-request-draft") : CI_ICONS[pr.ciState];
-  item.tooltip = `${pr.repo}\n${pr.title}\nby ${pr.author}${pr.isDraft ? " · draft" : ""}\nCI: ${pr.ciState}${pr.reviewDecision ? `\nReview: ${pr.reviewDecision}` : ""}`;
+  item.tooltip = `${pr.repo}\n${pr.title}\nby ${pr.author}${pr.isDraft ? " · draft" : ""}\nCI: ${pr.ciState}${pr.reviewDecision ? `\nReview: ${pr.reviewDecision}` : ""}${viewerReviewLabel ? `\nYour review: ${viewerReviewLabel}` : ""}`;
   item.contextValue = "pr";
   item.command = {
     command: "githubControlCenter.openPrDetails",

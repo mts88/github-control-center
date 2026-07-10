@@ -11,6 +11,10 @@ export interface IPullRequest {
   createdAt: string;
   ciState: CiState;
   reviewDecision: string | null;
+  /** the viewer's latest review state (APPROVED, DISMISSED, …) — null when never reviewed */
+  viewerReviewState: string | null;
+  /** set only on `IPrSnapshot.reviewed` entries: already reviewed, no active re-request */
+  isReviewedByMe?: boolean;
   headRefName: string;
   baseRefOid: string;
   headRefOid: string;
@@ -68,6 +72,8 @@ export interface IReviewThreadsSnapshot {
 export interface IPrSnapshot {
   toReview: IPullRequest[];
   mine: IPullRequest[];
+  /** open PRs the viewer already reviewed and that carry no active re-request */
+  reviewed: IPullRequest[];
 }
 
 export type MergeableState = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";

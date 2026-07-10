@@ -211,6 +211,11 @@
           "default": false,
           "description": "Include your own open PRs in the activity bar badge count."
         },
+        "githubControlCenter.badge.countReviewed": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include PRs you already reviewed (no active re-request) in the activity bar badge count. Off by default: only PRs actually waiting on you count."
+        },
         "githubControlCenter.notifications.enabled": {
           "type": "boolean",
           "default": true,
@@ -228,6 +233,11 @@
           "type": "boolean",
           "default": false,
           "description": "Hide draft PRs from the To Review list, the badge, and notifications."
+        },
+        "githubControlCenter.toReview.hideReviewed": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hide open PRs you already reviewed (approved, stale, or changes requested) from the To Review list while they wait for a re-request."
         },
         "githubControlCenter.updateBranch.defaultMethod": {
           "type": "string",

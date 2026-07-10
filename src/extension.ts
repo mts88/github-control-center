@@ -22,7 +22,7 @@ import {
 } from "./github";
 import { ReviewController, type IPatchKey } from "./ReviewController";
 import { toThreadPosition } from "./reviewThreads";
-import { isRepoMuted } from "./muting";
+import { applyFilters } from "./filters";
 import { NewPrTracker } from "./NewPrTracker";
 import { AsyncOidCache } from "./OidCache";
 import { PrContentProvider, fromPrUri, toPrUri } from "./PrContentProvider";
@@ -31,7 +31,7 @@ import { formatPrTabTitle, PrDetailsPanel, type IPanelMessage } from "./PrDetail
 import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./PrTreeProvider";
 import { PR_URI_SCHEME } from "./prUri";
 import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
-import type { IPrDetails, IPrFile, IPrFilePatch, IPrSnapshot, IPullRequest } from "./types";
+import type { IPrDetails, IPrFile, IPrFilePatch, IPullRequest } from "./types";
 
 const POLL_INTERVAL_MS = 150_000;
 // GitHub reads lag behind writes: one delayed catch-up refresh after each successful mutation
@@ -660,15 +660,21 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     try {
       const snapshot = await fetchPullRequests(session.accessToken);
-      knownRepos = new Set([...snapshot.toReview, ...snapshot.mine].map((pr) => pr.repo));
+      knownRepos = new Set([...snapshot.toReview, ...snapshot.mine, ...snapshot.reviewed].map((pr) => pr.repo));
       const config = vscode.workspace.getConfiguration("githubControlCenter");
       // filters run before providers, badge and trackers: lists, badge and toasts must always agree
-      const visibleSnapshot = applyFilters(snapshot, config.get("mutedRepos", []), config.get("toReview.hideDrafts", false));
-      toReviewProvider.setPrs(visibleSnapshot.toReview);
+      const visibleSnapshot = applyFilters(snapshot, {
+        mutedRepos: config.get("mutedRepos", []),
+        hideDrafts: config.get("toReview.hideDrafts", false),
+        hideReviewed: config.get("toReview.hideReviewed", false),
+      });
+      // requested rows first, already-reviewed rows after — within each repo group too
+      toReviewProvider.setPrs([...visibleSnapshot.toReview, ...visibleSnapshot.reviewed]);
       mineProvider.setPrs(visibleSnapshot.mine);
       const badgeCount =
         (config.get("badge.countToReview", true) ? visibleSnapshot.toReview.length : 0) +
-        (config.get("badge.countMine", false) ? visibleSnapshot.mine.length : 0);
+        (config.get("badge.countMine", false) ? visibleSnapshot.mine.length : 0) +
+        (config.get("badge.countReviewed", false) ? visibleSnapshot.reviewed.length : 0);
       toReviewView.badge = badgeCount
         ? { value: badgeCount, tooltip: `${badgeCount} pull requests` }
         : undefined;
@@ -769,14 +775,6 @@ export function activate(context: vscode.ExtensionContext): void {
   publishFilesLayoutContext();
 
   void refresh();
-}
-
-function applyFilters(snapshot: IPrSnapshot, mutedRepos: string[], hideDrafts: boolean): IPrSnapshot {
-  const isUnmuted = (pr: IPullRequest): boolean => !isRepoMuted(pr.repo, mutedRepos);
-  return {
-    toReview: snapshot.toReview.filter((pr) => isUnmuted(pr) && !(hideDrafts && pr.isDraft)),
-    mine: snapshot.mine.filter(isUnmuted),
-  };
 }
 
 function toErrorMessage(error: unknown): string {
