@@ -24,6 +24,7 @@ import { ReviewController, type IPatchKey } from "./ReviewController";
 import { detectAi, runAiPrompt } from "./ai";
 import { buildBriefPrompt, buildBriefSystemPrompt } from "./briefPrompt";
 import { BriefStore, type PersistedBrief } from "./briefState";
+import { toErrorMessage } from "./errors";
 import { toThreadPosition } from "./reviewThreads";
 import { applyFilters } from "./filters";
 import { NewPrTracker } from "./NewPrTracker";
@@ -62,6 +63,10 @@ interface IGitRepository {
 
 interface IGitExtension {
   getAPI(version: 1): { repositories: IGitRepository[] };
+}
+
+function ghccConfig(): vscode.WorkspaceConfiguration {
+  return vscode.workspace.getConfiguration("githubControlCenter");
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -274,7 +279,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function getFilesLayout(): FilesLayout {
-    return vscode.workspace.getConfiguration("githubControlCenter").get<FilesLayout>("files.layout", "tree");
+    return ghccConfig().get<FilesLayout>("files.layout", "tree");
   }
 
   function publishFilesLayoutContext(): void {
@@ -345,7 +350,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function aiConfig(): { backend: string; command: string; model: string; language: string } {
-    const config = vscode.workspace.getConfiguration("githubControlCenter");
+    const config = ghccConfig();
     // model reaches `claude --model` on the (win32, shell:true) command line; keep it inside the
     // known enum so a stray value can never carry shell metacharacters into the spawn
     const rawModel = config.get<string>("ai.claude.model", "sonnet");
@@ -662,7 +667,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   async function addMutedEntry(entry: string): Promise<void> {
-    const config = vscode.workspace.getConfiguration("githubControlCenter");
+    const config = ghccConfig();
     const mutedEntries = config.get<string[]>("mutedRepos", []);
     const isAlreadyMuted = mutedEntries.some((existing) => existing.trim().toLowerCase() === entry.toLowerCase());
     if (!isAlreadyMuted) {
@@ -683,7 +688,7 @@ export function activate(context: vscode.ExtensionContext): void {
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
     function buildItems(typedText: string): IMuteQuickPickItem[] {
-      const mutedEntries = vscode.workspace.getConfiguration("githubControlCenter").get<string[]>("mutedRepos", []);
+      const mutedEntries = ghccConfig().get<string[]>("mutedRepos", []);
       const listedEntries = new Set(mutedEntries.map((entry) => entry.trim().toLowerCase()));
       const items: IMuteQuickPickItem[] = mutedEntries.map((entry) => ({
         label: `$(mute) ${entry}`,
@@ -744,7 +749,7 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage(`Muted ${selected.entry}`);
         return;
       }
-      const config = vscode.workspace.getConfiguration("githubControlCenter");
+      const config = ghccConfig();
       const remainingEntries = config
         .get<string[]>("mutedRepos", [])
         .filter((entry) => entry.trim().toLowerCase() !== selected.entry.trim().toLowerCase());
@@ -842,7 +847,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const openPrId = currentDetailsPr.id;
         currentDetailsPr = allPrs.find((pr) => pr.id === openPrId) ?? currentDetailsPr;
       }
-      const config = vscode.workspace.getConfiguration("githubControlCenter");
+      const config = ghccConfig();
       // filters run before providers, badge and trackers: lists, badge and toasts must always agree
       const visibleSnapshot = applyFilters(snapshot, {
         mutedRepos: config.get("mutedRepos", []),
@@ -965,10 +970,10 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.commands.executeCommand("workbench.action.addComment", { fileComment: true });
     }),
     vscode.commands.registerCommand("githubControlCenter.viewFilesAsList", () => {
-      void vscode.workspace.getConfiguration("githubControlCenter").update("files.layout", "flat", vscode.ConfigurationTarget.Global);
+      void ghccConfig().update("files.layout", "flat", vscode.ConfigurationTarget.Global);
     }),
     vscode.commands.registerCommand("githubControlCenter.viewFilesAsTree", () => {
-      void vscode.workspace.getConfiguration("githubControlCenter").update("files.layout", "tree", vscode.ConfigurationTarget.Global);
+      void ghccConfig().update("files.layout", "tree", vscode.ConfigurationTarget.Global);
     }),
     reviewController,
     pendingStatusBar,
@@ -1011,10 +1016,6 @@ export function activate(context: vscode.ExtensionContext): void {
   // the initial poll always runs once (even in an unfocused window) so lists/badge populate on
   // startup; pollCycle's own reschedule then honors pollPaused for every cycle after this one
   void pollCycle();
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export function deactivate(): void {}
