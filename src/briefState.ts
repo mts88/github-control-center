@@ -58,6 +58,9 @@ export class BriefStore {
   }
 
   complete(prId: string, oid: string, text: string): void {
+    // re-insert at the end so eviction stays "newest kept, oldest out": a Map set on an existing
+    // key keeps its original position, which would evict a just-regenerated brief before stale ones
+    this.entries.delete(prId);
     this.entries.set(prId, { oid, state: { status: "done", text } });
     this.evictOldestSummaries();
   }

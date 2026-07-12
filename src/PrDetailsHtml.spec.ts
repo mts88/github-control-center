@@ -542,6 +542,19 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain("<li>a stray ` backtick</li>");
     });
 
+    it("should render ** bold ** spans as strong, a common slip past the prompt contract", () => {
+      const html = renderWithBrief({ status: "done", text: "- **Risk**: a race in the poll loop" });
+
+      expect(html).toContain("<li><strong>Risk</strong>: a race in the poll loop</li>");
+    });
+
+    it("should keep escaping markup inside bold spans", () => {
+      const html = renderWithBrief({ status: "done", text: "- **<img src=x>** danger" });
+
+      expect(html).toContain("<strong>&lt;img src=x&gt;</strong>");
+      expect(html).not.toContain("<img src=x>");
+    });
+
     it("should render the summary as a collapsible section, open by default", () => {
       const html = renderWithBrief({ status: "done", text: "Summary" });
 

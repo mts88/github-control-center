@@ -129,6 +129,18 @@ describe("BriefStore", () => {
       expect(store.getState("PR_3", OID_A)).toEqual({ status: "done", text: "three" });
     });
 
+    it("should treat a regenerated summary as newest, evicting a genuinely older one first", () => {
+      const store = new BriefStore([], 2);
+      store.complete("PR_old", OID_A, "old");
+      store.complete("PR_mid", OID_A, "mid");
+      store.complete("PR_old", OID_B, "old regenerated"); // re-completion moves PR_old to newest
+      store.complete("PR_new", OID_A, "new"); // pushes the cap over: the true oldest (PR_mid) goes
+
+      expect(store.getState("PR_mid", OID_A)).toEqual({ status: "idle" });
+      expect(store.getState("PR_old", OID_B)).toEqual({ status: "done", text: "old regenerated" });
+      expect(store.getState("PR_new", OID_A)).toEqual({ status: "done", text: "new" });
+    });
+
     it("should not count pending or failed entries against the summary cap", () => {
       const store = new BriefStore([], 2);
       store.begin("PR_pending", OID_A);

@@ -87,6 +87,21 @@ describe("detectAi", () => {
 
     await expect(result).resolves.toBe(false);
   });
+
+  it("should close stdin so a probe that reads it cannot block", () => {
+    detectAi("claude");
+
+    expect(child.stdin.end).toHaveBeenCalled();
+  });
+
+  it("should resolve false and kill a probe that hangs past the timeout", async () => {
+    vi.useFakeTimers();
+    const result = detectAi("claude", 5_000);
+    vi.advanceTimersByTime(5_001);
+
+    await expect(result).resolves.toBe(false);
+    expect(child.kill).toHaveBeenCalled();
+  });
 });
 
 describe("runAiPrompt", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBriefPrompt, buildBriefSystemPrompt, PATCH_BUDGET_BYTES } from "./briefPrompt";
+import { buildBriefPrompt, buildBriefSystemPrompt, MAX_BODY_CHARS, MAX_FILE_LINES, PATCH_BUDGET_BYTES } from "./briefPrompt";
 import type { IPrDetails, IPrFile, IPrFilePatch } from "./types";
 
 function buildDetails(overrides: Partial<IPrDetails> = {}): IPrDetails {
@@ -63,6 +63,13 @@ describe("buildBriefSystemPrompt", () => {
     expect(systemPrompt).toContain("What changed");
     expect(systemPrompt).toContain("Risk areas");
     expect(systemPrompt).toContain("Suggested reading order");
+  });
+
+  it("should fall back to English when the language is blank", () => {
+    const systemPrompt = buildBriefSystemPrompt("   ");
+
+    expect(systemPrompt).toContain("Respond in English");
+    expect(systemPrompt).not.toContain("Respond in  ");
   });
 });
 
@@ -128,6 +135,37 @@ describe("buildBriefPrompt", () => {
 
     expect(prompt).not.toContain("=== logo.png ===");
     expect(prompt).toContain("logo.png (+0/-0, MODIFIED)");
+  });
+
+  it("should truncate the highest-churn patch to fit the budget instead of dropping it", () => {
+    const oversizedPatch = `@@ hunk one @@\n${"a".repeat(PATCH_BUDGET_BYTES)}\n@@ hunk two @@\n${"b".repeat(1_000)}`;
+    const files = [buildFile("core.ts", 900, 0), buildFile("tiny.ts", 1, 0)];
+    const patches = toPatchMap([
+      { path: "core.ts", patch: oversizedPatch },
+      { path: "tiny.ts", patch: "@@ tiny hunk @@" },
+    ]);
+    const prompt = buildBriefPrompt(buildDetails(), files, patches);
+
+    expect(prompt).toContain("=== core.ts ===");
+    expect(prompt).toContain("patch truncated (over size budget)");
+    expect(prompt).not.toContain("@@ hunk two @@");
+  });
+
+  it("should cap the file list by churn and note the omitted count", () => {
+    const files = Array.from({ length: MAX_FILE_LINES + 5 }, (_, index) => buildFile(`file-${index}.ts`, index, 0));
+    const prompt = buildBriefPrompt(buildDetails(), files, toPatchMap([]));
+
+    expect(prompt).toContain("5 more files not shown");
+    // the highest-churn file survives the cap, a zero-churn one is dropped
+    expect(prompt).toContain(`file-${MAX_FILE_LINES + 4}.ts`);
+    expect(prompt).not.toContain("- file-0.ts ");
+  });
+
+  it("should truncate an oversized PR description", () => {
+    const details = buildDetails({ bodyHtml: `<p>${"word ".repeat(MAX_BODY_CHARS)}</p>` });
+    const prompt = buildBriefPrompt(details, [buildFile("a.ts", 1, 1)], toPatchMap([]));
+
+    expect(prompt).toContain("…(truncated)");
   });
 
   it("should put the untrusted-data marker before any PR content", () => {

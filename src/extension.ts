@@ -44,6 +44,8 @@ const BRIEF_CACHE_STATE_KEY = "githubControlCenter.briefCache";
 const NON_AI_SECTIONS = ["badge", "notifications", "mutedRepos", "toReview", "updateBranch", "files"].map(
   (section) => `githubControlCenter.${section}`,
 );
+// the ai.claude.model enum (mirrors package.json); a value outside it is coerced to the default
+const AI_MODELS = new Set(["sonnet", "haiku", "opus", ""]);
 
 // minimal typed surface of the built-in vscode.git extension API
 interface IGitRemote {
@@ -317,6 +319,9 @@ export function activate(context: vscode.ExtensionContext): void {
   let lastRenderedBrief: string | undefined;
   let detailsRequestSequence = 0;
   let mutationInFlight = false;
+  // a confirmation modal is open: the webview has already frozen its buttons but mutationInFlight
+  // is not set yet — a silent re-render here would unfreeze them under the still-open dialog
+  let confirmModalOpen = false;
   // background refreshes are skipped while a draft comment sits in the composer:
   // a full HTML re-render would wipe it
   let composerHasText = false;
@@ -325,6 +330,9 @@ export function activate(context: vscode.ExtensionContext): void {
   let knownRepos = new Set<string>();
   // AI brief state: features hide entirely when the claude CLI is not on this machine
   let aiAvailable = false;
+  // detection is lazy: the first PR panel open probes the CLI, so a window that never opens one
+  // pays no `claude --version` spawn at startup
+  let aiDetectionStarted = false;
   // only the newest detection may write aiAvailable: a slow stale probe must never overwrite
   // the result of a newer config (same pattern as detailsRequestSequence below)
   let aiDetectSequence = 0;
@@ -338,21 +346,36 @@ export function activate(context: vscode.ExtensionContext): void {
 
   function aiConfig(): { backend: string; command: string; model: string; language: string } {
     const config = vscode.workspace.getConfiguration("githubControlCenter");
+    // model reaches `claude --model` on the (win32, shell:true) command line; keep it inside the
+    // known enum so a stray value can never carry shell metacharacters into the spawn
+    const rawModel = config.get<string>("ai.claude.model", "sonnet");
+    const model = AI_MODELS.has(rawModel) ? rawModel : "sonnet";
     return {
       backend: config.get<string>("ai.backend", "claude-code"),
       command: config.get<string>("ai.claude.command", "claude"),
-      model: config.get<string>("ai.claude.model", "sonnet"),
+      model,
       language: config.get<string>("ai.language", "English"),
     };
   }
 
+  // probe the CLI once, lazily, on the first panel that could show the brief button
+  function ensureAiDetected(): void {
+    if (!aiDetectionStarted) {
+      refreshAiAvailability();
+    }
+  }
+
   function refreshAiAvailability(): void {
+    aiDetectionStarted = true;
     const config = aiConfig();
     const requestId = ++aiDetectSequence;
     // only claude-code exists today; the gate keeps a future backend (#19) from
     // silently running through the claude path
     if (config.backend !== "claude-code") {
       aiAvailable = false;
+      if (currentDetailsPr) {
+        rerenderBriefFor(currentDetailsPr.id); // drop the now-dead brief button from the open panel
+      }
       return;
     }
     void detectAi(config.command).then((available) => {
@@ -383,6 +406,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function openPrDetails(pr: IPullRequest): Promise<void> {
     currentDetailsPr = pr;
+    ensureAiDetected(); // first panel open triggers the one-time CLI probe
     composerHasText = false; // every user-initiated render starts from an empty composer
     const requestId = ++detailsRequestSequence;
     detailsPanel.showLoading(formatPrTabTitle(pr));
@@ -422,7 +446,19 @@ export function activate(context: vscode.ExtensionContext): void {
   // one shared guard for every silent re-render: never a hidden panel, never during a
   // mutation, never over a composer draft (a full HTML replace would wipe it)
   function canSilentlyUpdatePanel(): boolean {
-    return detailsPanel.isVisible && !mutationInFlight && !composerHasText;
+    return detailsPanel.isVisible && !mutationInFlight && !confirmModalOpen && !composerHasText;
+  }
+
+  // a modal confirmation freezes the webview buttons; hold the silent-render guard for its whole
+  // lifetime so a brief completing mid-dialog cannot re-render and unfreeze them
+  async function confirmAction(message: string, action: string): Promise<boolean> {
+    confirmModalOpen = true;
+    try {
+      const choice = await vscode.window.showWarningMessage(message, { modal: true }, action);
+      return choice === action;
+    } finally {
+      confirmModalOpen = false;
+    }
   }
 
   // background counterpart of openPrDetails, run on every poll cycle: it reads the request
@@ -462,9 +498,9 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
     if (!canSilentlyUpdatePanel()) {
-      // the summary waits in the cache. Never unfreeze mid-mutation: the webview would
-      // accept a second merge click while the first is still executing
-      if (!mutationInFlight) {
+      // the summary waits in the cache. Never unfreeze while a mutation runs or a confirmation
+      // modal is open: the webview would accept a second merge click on buttons it froze
+      if (!mutationInFlight && !confirmModalOpen) {
         detailsPanel.reenableActions();
       }
       return;
@@ -554,8 +590,8 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       const actionLabel = isRequestingChanges ? "Request changes" : "Approve";
       const successMessage = isRequestingChanges ? `Changes requested on: ${pr.title}` : `Approved: ${pr.title}`;
-      const confirmation = await vscode.window.showWarningMessage(`${actionLabel}: "${pr.title}"?`, { modal: true }, actionLabel);
-      if (confirmation !== actionLabel) {
+      const confirmed = await confirmAction(`${actionLabel}: "${pr.title}"?`, actionLabel);
+      if (!confirmed) {
         detailsPanel.reenableActions();
         return;
       }
@@ -573,8 +609,8 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       const methodLabel = MERGE_METHOD_LABELS[message.method];
-      const confirmation = await vscode.window.showWarningMessage(`${methodLabel}: "${pr.title}" into ${openDetails.baseRefName}?`, { modal: true }, "Merge");
-      if (confirmation !== "Merge") {
+      const confirmed = await confirmAction(`${methodLabel}: "${pr.title}" into ${openDetails.baseRefName}?`, "Merge");
+      if (!confirmed) {
         detailsPanel.reenableActions();
         return;
       }
@@ -923,7 +959,14 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       if (event.affectsConfiguration("githubControlCenter.ai")) {
-        refreshAiAvailability();
+        // only backend and the CLI path change availability; language/model never do, so they
+        // must not trigger a wasted `claude --version` probe on every keystroke
+        const affectsAvailability =
+          event.affectsConfiguration("githubControlCenter.ai.backend") ||
+          event.affectsConfiguration("githubControlCenter.ai.claude.command");
+        if (affectsAvailability && aiDetectionStarted) {
+          refreshAiAvailability();
+        }
         // ai keys cannot affect PR data: skip the GitHub poll unless the same event
         // also touched settings the poll pipeline actually reads
         const touchesPollSettings = NON_AI_SECTIONS.some((section) => event.affectsConfiguration(section));
@@ -937,7 +980,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   publishFilesLayoutContext();
-  refreshAiAvailability();
+  // AI detection is lazy (first PR panel open): no CLI spawn in a window that never opens one
 
   void refresh();
 }

@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 export const SYSTEM_PROMPT_FILENAME = "github-control-center-brief-system-prompt.txt";
 const DEFAULT_TIMEOUT_MS = 120_000;
+const DETECT_TIMEOUT_MS = 10_000;
 const STDERR_TAIL_CHARS = 400;
 
 function useShell(): boolean {
@@ -28,12 +29,30 @@ function prepareSpawn(command: string, args: string[]): { command: string; args:
   return { command: quoteForShell(command), args: args.map(quoteForShell) };
 }
 
-export function detectAi(command: string): Promise<boolean> {
+export function detectAi(command: string, timeoutMs = DETECT_TIMEOUT_MS): Promise<boolean> {
   return new Promise((resolve) => {
     const prepared = prepareSpawn(command, ["--version"]);
     const child = spawn(prepared.command, prepared.args, { shell: useShell() });
-    child.on("error", () => resolve(false));
-    child.on("close", (exitCode) => resolve(exitCode === 0));
+    let settled = false;
+    function finish(available: boolean): void {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(available);
+    }
+    // a wedged CLI (network update check, stuck login, a wrapper reading stdin) must never leave
+    // availability undetermined and the probe process leaked
+    const timer = setTimeout(() => {
+      killChildTree(child);
+      finish(false);
+    }, timeoutMs);
+    child.on("error", () => finish(false));
+    child.on("close", (exitCode) => finish(exitCode === 0));
+    // close stdin so a child that reads it does not block; a fast exit can EPIPE the end()
+    child.stdin?.on("error", () => {});
+    child.stdin?.end();
   });
 }
 

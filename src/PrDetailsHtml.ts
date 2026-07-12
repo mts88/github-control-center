@@ -283,10 +283,13 @@ function renderHeaderActions(brief?: IBriefState): string {
     <div class="header-actions">${briefButton}</div>`;
 }
 
-// escape first, then style paired backticks: the <code> content is already-escaped text,
-// so a hostile payload inside backticks stays inert
+// escape first, then style paired backticks and ** bold **: the wrapped content is
+// already-escaped text, so a hostile payload inside the markers stays inert. Bold is the most
+// common slip past the "backticks only" prompt contract — absorb it rather than fight the model.
 function formatBriefInline(text: string): string {
-  return escapeHtml(text).replace(/`([^`]+)`/g, "<code>$1</code>");
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 }
 
 // the system prompt constrains the model to '## ' title lines and '- ' bullets, but models
@@ -690,11 +693,14 @@ export function renderPrDetailsHtml(
     wire("checkout", () => ({ command: "checkout" }));
 
     // brief is read-only and re-renders on its own: wired outside send() so a click
-    // does not freeze the composer and the other action buttons
+    // does not freeze the composer and the other action buttons. Its self-disable is not part
+    // of frozenButtons, so a reenable (no silent render possible) must restore it separately.
+    let briefClickPending = false;
     const briefButton = document.getElementById("brief");
     if (briefButton) {
       briefButton.addEventListener("click", () => {
         briefButton.disabled = true;
+        briefClickPending = true;
         vscodeApi.postMessage({ command: "brief" });
       });
     }
@@ -753,6 +759,11 @@ export function renderPrDetailsHtml(
       if (event.data && event.data.command === "reenable") {
         frozenButtons.forEach((button) => { button.disabled = false; });
         frozenButtons = [];
+        // restore the brief button only when a click is what disabled it (never a done/pending render)
+        if (briefClickPending && briefButton) {
+          briefButton.disabled = false;
+        }
+        briefClickPending = false;
         syncComposerButtons();
       }
     });

@@ -311,14 +311,16 @@
               "The Claude Code CLI in headless mode, using your existing Claude subscription"
             ],
             "default": "claude-code",
+            "scope": "machine",
             "order": 1,
-            "description": "Which local AI backend powers the AI features (PR brief). More backends may be added over time."
+            "description": "Which local AI backend powers the AI features (PR brief). More backends may be added over time. Machine-scoped: a workspace cannot override it."
           },
           "githubControlCenter.ai.language": {
             "type": "string",
             "default": "English",
+            "scope": "machine",
             "order": 2,
-            "description": "Language AI-generated content (the PR brief) is written in, regardless of the AI backend in use."
+            "description": "Language AI-generated content (the PR brief) is written in, regardless of the AI backend in use. Machine-scoped: a workspace cannot inject it into the AI system prompt."
           },
           "githubControlCenter.ai.claude.command": {
             "type": "string",
@@ -348,8 +350,9 @@
               "Whatever the Claude CLI is configured to use"
             ],
             "default": "sonnet",
+            "scope": "machine",
             "order": 4,
-            "description": "Model passed to `claude --model`. Used only when the AI backend is Claude Code."
+            "description": "Model passed to `claude --model`. Used only when the AI backend is Claude Code. Machine-scoped: a workspace cannot point it at an arbitrary value."
           }
         }
       }
