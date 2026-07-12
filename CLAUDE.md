@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**GitHub Control Center** (package `github-control-center`, folder `git-radar`) is a personal VSCode extension acting as a control center for daily GitHub activity: PRs waiting for review, own PRs, badge count, toast notifications, and a GitHub-like PR page with actions. Internal identifiers (commands, views, settings) keep the `githubControlCenter.*` namespace — renaming them would break saved user settings for zero gain.
+**GitHub Control Center** (package `github-control-center`) is a personal VSCode extension acting as a control center for daily GitHub activity: PRs waiting for review, own PRs, badge count, toast notifications, and a GitHub-like PR page with actions. Internal identifiers (commands, views, settings) keep the `githubControlCenter.*` namespace — renaming them would break saved user settings for zero gain.
 
 ## Commands
 
