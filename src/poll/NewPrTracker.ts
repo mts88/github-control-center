@@ -1,4 +1,4 @@
-import type { IPullRequest } from "./types";
+import type { IPullRequest } from "../core/types";
 
 export class NewPrTracker {
   private readonly seenPrIds = new Set<string>();

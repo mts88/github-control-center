@@ -1,4 +1,4 @@
-import type { IPrDetails, IPrTimelineItem, MergeMethod, UpdateBranchMethod } from "./types";
+import type { IBriefState, IPrDetails, IPrTimelineItem, MergeMethod, UpdateBranchMethod } from "../core/types";
 
 export const MERGE_METHOD_LABELS: Record<MergeMethod, string> = {
   SQUASH: "Squash and merge",
@@ -36,6 +36,7 @@ const BASE_STYLE = `
     --gr-green: var(--vscode-charts-green, #2ea043);
     --gr-red: var(--vscode-charts-red, #f85149);
     --gr-purple: var(--vscode-charts-purple, #8957e5);
+    --gr-yellow: var(--vscode-charts-yellow, #d0a215);
     --gr-muted: var(--vscode-descriptionForeground);
     --gr-border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
     --gr-box-bg: var(--vscode-editorWidget-background, transparent);
@@ -204,6 +205,33 @@ const BASE_STYLE = `
   .diffstat .add { color: var(--gr-green); }
   .diffstat .del { color: var(--gr-red); }
   .stats-line { color: var(--gr-muted); margin-bottom: 8px; }
+  .brief-body { font-size: 0.95em; }
+  .brief-body p { margin: 4px 0; }
+  .brief-body ul { margin: 4px 0 10px; padding-left: 18px; }
+  .brief-body li { margin: 2px 0; }
+  .brief-heading { font-weight: 600; margin: 10px 0 4px; }
+  .brief-heading:first-child { margin-top: 0; }
+  .brief-error { color: var(--gr-red); white-space: pre-wrap; }
+  .brief-stale {
+    border: 1px solid var(--gr-border);
+    border-left: 3px solid var(--gr-yellow);
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    font-size: 0.9em;
+    color: var(--gr-muted);
+  }
+  .brief-stale-tag {
+    margin-left: 8px;
+    font-size: 0.75em;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--gr-yellow);
+  }
+  .header-actions { margin-top: 10px; display: flex; gap: 8px; }
+  .brief-section summary { cursor: pointer; font-weight: 600; color: var(--gr-muted); padding: 8px 12px; }
+  .brief-section[open] summary { border-bottom: 1px solid var(--gr-border); }
+  .brief-avatar { display: flex; align-items: center; justify-content: center; }
 `;
 
 export function escapeHtml(value: string): string {
@@ -251,7 +279,125 @@ function renderAvatar(avatarUrl: string, author: string): string {
   return `<img class="avatar" src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(author)}">`;
 }
 
-function renderHeader(details: IPrDetails): string {
+function renderBriefButton(brief?: IBriefState): string {
+  if (!brief || brief.status === "unavailable") {
+    return "";
+  }
+  // a fresh done summary is disabled by design: it's a snapshot of the head commit — a new
+  // push flags it stale and re-enables the button; error stays enabled for retries too
+  const isFreshDone = brief.status === "done" && !brief.stale;
+  const disabled = brief.status === "pending" || isFreshDone ? " disabled" : "";
+  let title = "";
+  if (isFreshDone) {
+    title = ' title="Already summarized — new commits re-enable it"';
+  } else if (brief.status === "done") {
+    title = ' title="New commits since this summary — click to regenerate"';
+  }
+  return `<button id="brief"${disabled}${title}>✨ Brief me</button>`;
+}
+
+// dedicated row under the state pill — future action buttons land here too
+function renderHeaderActions(brief?: IBriefState): string {
+  const briefButton = renderBriefButton(brief);
+  if (!briefButton) {
+    return "";
+  }
+  return `
+    <div class="header-actions">${briefButton}</div>`;
+}
+
+// escape first, then style paired backticks and ** bold **: the wrapped content is
+// already-escaped text, so a hostile payload inside the markers stays inert. Bold is the most
+// common slip past the "backticks only" prompt contract — absorb it rather than fight the model.
+function formatBriefInline(text: string): string {
+  return escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+// the system prompt constrains the model to '## ' title lines and '- ' bullets, but models
+// reliably slip past it: other heading depths ('#'..'######'), '*'/'+' bullets, '1.' numbered
+// lists, backtick code and '**bold**'. The walker absorbs those markers rather than fighting the
+// model; everything is escaped, so model output stays inert. Underscore/single-'*' italics are
+// deliberately NOT parsed — they collide with snake_case identifiers common in a code summary.
+function renderBriefText(text: string): string {
+  const parts: string[] = [];
+  let listItems: string[] = [];
+  let listTag: "ul" | "ol" = "ul";
+  function flushList(): void {
+    if (listItems.length > 0) {
+      parts.push(`<${listTag}>${listItems.join("")}</${listTag}>`);
+      listItems = [];
+    }
+  }
+  function pushListItem(tag: "ul" | "ol", item: string): void {
+    if (listTag !== tag) {
+      flushList();
+      listTag = tag;
+    }
+    listItems.push(`<li>${formatBriefInline(item)}</li>`);
+  }
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushList();
+      continue;
+    }
+    const heading = /^#{1,6}\s+(.*)$/.exec(trimmed);
+    if (heading) {
+      flushList();
+      parts.push(`<div class="brief-heading">${formatBriefInline(heading[1])}</div>`);
+      continue;
+    }
+    const bulletItem = /^[-*+]\s+(.*)$/.exec(trimmed);
+    if (bulletItem) {
+      pushListItem("ul", bulletItem[1]);
+      continue;
+    }
+    const numberedItem = /^\d+\.\s+(.*)$/.exec(trimmed);
+    if (numberedItem) {
+      pushListItem("ol", numberedItem[1]);
+      continue;
+    }
+    flushList();
+    parts.push(`<p>${formatBriefInline(trimmed)}</p>`);
+  }
+  flushList();
+  return parts.join("");
+}
+
+function renderBriefSection(brief?: IBriefState): string {
+  if (!brief || brief.status === "idle" || brief.status === "unavailable") {
+    return "";
+  }
+  let content: string;
+  if (brief.status === "pending") {
+    content = "Summarizing…";
+  } else if (brief.status === "error") {
+    content = `<span class="brief-error">${escapeHtml(brief.text ?? "")}</span>`;
+  } else {
+    content = renderBriefText(brief.text ?? "");
+  }
+  // stylized starburst evoking the Claude mark (not the trademarked asset), inline SVG:
+  // part of the document, so the nonce-only CSP is untouched. Lives inside <summary>
+  // because everything else in a closed <details> is hidden with it
+  const providerAvatar =
+    '<span class="avatar brief-avatar" aria-hidden="true">' +
+    '<svg viewBox="0 0 24 24" width="16" height="16"><g stroke="#D97757" stroke-width="3" stroke-linecap="round">' +
+    '<line x1="12" y1="3" x2="12" y2="21"/><line x1="4.2" y1="7.5" x2="19.8" y2="16.5"/><line x1="19.8" y1="7.5" x2="4.2" y2="16.5"/>' +
+    "</g></svg></span>";
+  const staleTag = brief.stale ? '<span class="brief-stale-tag">outdated</span>' : "";
+  const staleBanner = brief.stale
+    ? '<div class="brief-stale">⚠ New commits were pushed since this summary — it may be outdated. Click ✨ Brief me to regenerate.</div>'
+    : "";
+  return `
+  <details open class="box brief-section">
+    <summary>${providerAvatar}Summary${staleTag}</summary>
+    <div class="box-body brief-body">${staleBanner}${content}</div>
+  </details>`;
+}
+
+function renderHeader(details: IPrDetails, brief?: IBriefState): string {
   const pill = details.state === "OPEN" && details.isDraft ? { css: "draft", label: "Draft" } : PILLS[details.state];
   const repoUrl = details.url.replace(/\/pull\/\d+$/, "");
   return `
@@ -268,7 +414,7 @@ function renderHeader(details: IPrDetails): string {
         into <span class="branch">${escapeHtml(details.baseRefName)}</span>
         from <span class="branch">${escapeHtml(details.headRefName)}</span>
       </span>
-    </div>
+    </div>${renderHeaderActions(brief)}
   </header>`;
 }
 
@@ -442,7 +588,7 @@ function renderSidebar(details: IPrDetails): string {
   </aside>`;
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
     .replace(/&#x([0-9a-fA-F]+);/gi, (_match, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
@@ -515,6 +661,7 @@ export function renderPrDetailsHtml(
   now: number,
   mermaidScriptUri?: string,
   defaultUpdateMethod: UpdateBranchMethod = "REBASE",
+  brief?: IBriefState,
 ): string {
   const processedDetails: IPrDetails = {
     ...details,
@@ -526,9 +673,10 @@ export function renderPrDetailsHtml(
   const mermaidSupport = renderMermaidSupport(processedDetails, nonce, mermaidScriptUri);
 
   const body = `
-  ${renderHeader(processedDetails)}
+  ${renderHeader(processedDetails, brief)}
   <div class="layout">
     <main>
+      ${renderBriefSection(brief)}
       <div class="timeline">
         ${renderDescription(processedDetails, now)}
         ${timelineItems}
@@ -549,8 +697,12 @@ export function renderPrDetailsHtml(
     const composerText = document.getElementById("composer-text");
     const allButtons = Array.from(document.querySelectorAll("button"));
 
+    // reenable must restore exactly what send froze: buttons rendered disabled by design
+    // (brief pending/done) stay disabled when a confirmation is cancelled or a mutation fails
+    let frozenButtons = [];
     function send(message) {
-      allButtons.forEach((button) => { button.disabled = true; });
+      frozenButtons = allButtons.filter((button) => !button.disabled);
+      frozenButtons.forEach((button) => { button.disabled = true; });
       vscodeApi.postMessage(message);
     }
 
@@ -569,6 +721,19 @@ export function renderPrDetailsHtml(
     wire("ready", () => ({ command: "readyForReview" }));
     wire("update-branch", () => ({ command: "updateBranch", method: document.getElementById("update-method").value }));
     wire("checkout", () => ({ command: "checkout" }));
+
+    // brief is read-only and re-renders on its own: wired outside send() so a click
+    // does not freeze the composer and the other action buttons. Its self-disable is not part
+    // of frozenButtons, so a reenable (no silent render possible) must restore it separately.
+    let briefClickPending = false;
+    const briefButton = document.getElementById("brief");
+    if (briefButton) {
+      briefButton.addEventListener("click", () => {
+        briefButton.disabled = true;
+        briefClickPending = true;
+        vscodeApi.postMessage({ command: "brief" });
+      });
+    }
 
     function syncComposerButtons() {
       const hasText = composerText.value.trim().length > 0;
@@ -590,11 +755,22 @@ export function renderPrDetailsHtml(
     });
     syncComposerButtons();
 
-    // full HTML replaces (background refresh, post-mutation re-render) reset the scroll:
-    // restore the reading position when the same PR renders again
+    // full HTML replaces (background refresh, post-mutation re-render) reset the scroll and
+    // re-open the brief <details>: restore both when the same PR renders again
     const savedState = vscodeApi.getState();
-    if (savedState && savedState.prKey === prKey && typeof savedState.scrollY === "number") {
+    const sameSavedPr = savedState && savedState.prKey === prKey;
+    if (sameSavedPr && typeof savedState.scrollY === "number") {
       window.scrollTo(0, savedState.scrollY);
+    }
+    const briefDetails = document.querySelector(".brief-section");
+    if (briefDetails && sameSavedPr && savedState.briefCollapsed) {
+      briefDetails.open = false;
+    }
+    function saveViewState() {
+      vscodeApi.setState({ prKey, scrollY: window.scrollY, briefCollapsed: briefDetails ? !briefDetails.open : false });
+    }
+    if (briefDetails) {
+      briefDetails.addEventListener("toggle", saveViewState);
     }
     let scrollSaveTimer;
     window.addEventListener("scroll", () => {
@@ -603,7 +779,7 @@ export function renderPrDetailsHtml(
       }
       scrollSaveTimer = setTimeout(() => {
         scrollSaveTimer = undefined;
-        vscodeApi.setState({ prKey, scrollY: window.scrollY });
+        saveViewState();
       }, 200);
     });
 
@@ -611,7 +787,13 @@ export function renderPrDetailsHtml(
     // so the typed comment survives instead of being wiped by a full re-render
     window.addEventListener("message", (event) => {
       if (event.data && event.data.command === "reenable") {
-        allButtons.forEach((button) => { button.disabled = false; });
+        frozenButtons.forEach((button) => { button.disabled = false; });
+        frozenButtons = [];
+        // restore the brief button only when a click is what disabled it (never a done/pending render)
+        if (briefClickPending && briefButton) {
+          briefButton.disabled = false;
+        }
+        briefClickPending = false;
         syncComposerButtons();
       }
     });

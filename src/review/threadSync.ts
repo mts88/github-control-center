@@ -1,4 +1,4 @@
-import type { IReviewThread } from "./types";
+import type { IReviewThread } from "../core/types";
 
 export interface IThreadSyncPlan {
   create: IReviewThread[];

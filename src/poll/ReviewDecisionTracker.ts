@@ -1,4 +1,4 @@
-import type { IPullRequest } from "./types";
+import type { IPullRequest } from "../core/types";
 
 const NOTIFIABLE_DECISIONS = new Set(["APPROVED", "CHANGES_REQUESTED"]);
 

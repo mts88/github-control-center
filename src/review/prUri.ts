@@ -1,4 +1,4 @@
-import type { DiffSide } from "./types";
+import type { DiffSide } from "../core/types";
 
 export const PR_URI_SCHEME = "ghcc-pr";
 

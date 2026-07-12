@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
+import { toErrorMessage } from "../core/errors";
 import { buildFileTree, type IFileTreeFolder } from "./fileTree";
-import type { CiState, FileChangeType, IPrFile, IPullRequest } from "./types";
+import type { CiState, FileChangeType, IPrFile, IPullRequest } from "../core/types";
 
 export type FilesLayout = "flat" | "tree";
 
@@ -103,7 +104,7 @@ export class PrTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       // expansion is user-initiated: unlike the silent poll, failures render in the tree
       return this.loadFiles(element.pr).then(
         (files) => this.toFileChildren(element.pr, files),
-        (error: unknown) => [{ kind: "message" as const, text: `Failed to load files: ${error instanceof Error ? error.message : String(error)}` }],
+        (error: unknown) => [{ kind: "message" as const, text: `Failed to load files: ${toErrorMessage(error)}` }],
       );
     }
     if (element.kind === "folder") {

@@ -17,7 +17,7 @@ import type {
   MergeableState,
   PrState,
   UpdateBranchMethod,
-} from "./types";
+} from "../core/types";
 
 const GITHUB_AUTH_PROVIDER = "github";
 // "repo" is required, otherwise PRs in private repositories are silently missing;

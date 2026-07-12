@@ -19,23 +19,31 @@ import {
   submitPrReview,
   unresolveThread,
   updatePrBranch,
-} from "./github";
-import { ReviewController, type IPatchKey } from "./ReviewController";
-import { toThreadPosition } from "./reviewThreads";
-import { applyFilters } from "./filters";
-import { NewPrTracker } from "./NewPrTracker";
-import { AsyncOidCache } from "./OidCache";
-import { PrContentProvider, fromPrUri, toPrUri } from "./PrContentProvider";
-import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
-import { formatPrTabTitle, PrDetailsPanel, type IPanelMessage } from "./PrDetailsPanel";
-import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./PrTreeProvider";
-import { PR_URI_SCHEME } from "./prUri";
-import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
-import type { IPrDetails, IPrFile, IPrFilePatch, IPullRequest } from "./types";
+} from "./github/github";
+import { ReviewController, type IPatchKey } from "./review/ReviewController";
+import { detectAi, runAiPrompt } from "./brief/ai";
+import { BriefStore, type PersistedBrief } from "./brief/briefState";
+import { DetailsSession } from "./panel/DetailsSession";
+import { toErrorMessage } from "./core/errors";
+import { toThreadPosition } from "./review/reviewThreads";
+import { applyFilters } from "./poll/filters";
+import { NewPrTracker } from "./poll/NewPrTracker";
+import { AsyncOidCache } from "./core/OidCache";
+import { PrContentProvider, fromPrUri, toPrUri } from "./review/PrContentProvider";
+import { PrDetailsPanel } from "./panel/PrDetailsPanel";
+import { PollScheduler } from "./poll/PollScheduler";
+import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./tree/PrTreeProvider";
+import { PR_URI_SCHEME } from "./review/prUri";
+import { ReviewDecisionTracker } from "./poll/ReviewDecisionTracker";
+import type { IPrFile, IPrFilePatch, IPullRequest } from "./core/types";
 
-const POLL_INTERVAL_MS = 150_000;
-// GitHub reads lag behind writes: one delayed catch-up refresh after each successful mutation
-const POST_MUTATION_REFRESH_DELAY_MS = 3_000;
+const BRIEF_CACHE_STATE_KEY = "githubControlCenter.briefCache";
+// config sections that feed the poll pipeline: an event touching only ai.* keys skips the poll
+const NON_AI_SECTIONS = ["badge", "notifications", "mutedRepos", "toReview", "updateBranch", "files"].map(
+  (section) => `githubControlCenter.${section}`,
+);
+// the ai.claude.model enum (mirrors package.json); a value outside it is coerced to the default
+const AI_MODELS = new Set(["sonnet", "haiku", "opus", ""]);
 
 // minimal typed surface of the built-in vscode.git extension API
 interface IGitRemote {
@@ -52,6 +60,10 @@ interface IGitRepository {
 
 interface IGitExtension {
   getAPI(version: 1): { repositories: IGitRepository[] };
+}
+
+function ghccConfig(): vscode.WorkspaceConfiguration {
+  return vscode.workspace.getConfiguration("githubControlCenter");
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -264,7 +276,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function getFilesLayout(): FilesLayout {
-    return vscode.workspace.getConfiguration("githubControlCenter").get<FilesLayout>("files.layout", "tree");
+    return ghccConfig().get<FilesLayout>("files.layout", "tree");
   }
 
   function publishFilesLayoutContext(): void {
@@ -300,16 +312,29 @@ export function activate(context: vscode.ExtensionContext): void {
   const newPrTracker = new NewPrTracker();
   const reviewDecisionTracker = new ReviewDecisionTracker();
   const detailsPanel = new PrDetailsPanel(context.extensionUri);
-  let currentDetailsPr: IPullRequest | undefined;
-  let currentDetails: IPrDetails | undefined;
-  let detailsRequestSequence = 0;
-  let mutationInFlight = false;
-  // background refreshes are skipped while a draft comment sits in the composer:
-  // a full HTML re-render would wipe it
-  let composerHasText = false;
-  let postMutationTimer: ReturnType<typeof setTimeout> | undefined;
   // repos seen in the last raw snapshot (pre-filter, so muted ones stay unmutable from the picker)
   let knownRepos = new Set<string>();
+  // results are pinned to the head oid — a push invalidates naturally. Hydrated from globalState
+  // so a window reload keeps the briefs — local only (never setKeysForSync: PR content)
+  const briefStore = new BriefStore(context.globalState.get<PersistedBrief[]>(BRIEF_CACHE_STATE_KEY, []));
+
+  function persistBriefs(): void {
+    void context.globalState.update(BRIEF_CACHE_STATE_KEY, briefStore.serialize());
+  }
+
+  function aiConfig(): { backend: string; command: string; model: string; language: string } {
+    const config = ghccConfig();
+    // model reaches `claude --model` on the (win32, shell:true) command line; keep it inside the
+    // known enum so a stray value can never carry shell metacharacters into the spawn
+    const rawModel = config.get<string>("ai.claude.model", "sonnet");
+    const model = AI_MODELS.has(rawModel) ? rawModel : "sonnet";
+    return {
+      backend: config.get<string>("ai.backend", "claude-code"),
+      command: config.get<string>("ai.claude.command", "claude"),
+      model,
+      language: config.get<string>("ai.language", "English"),
+    };
+  }
 
   function openPr(target: string | TreeNode): void {
     // string from the webview flow, TreeNode when invoked from the inline tree icon
@@ -319,176 +344,8 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  async function openPrDetails(pr: IPullRequest): Promise<void> {
-    currentDetailsPr = pr;
-    composerHasText = false; // every user-initiated render starts from an empty composer
-    const requestId = ++detailsRequestSequence;
-    detailsPanel.showLoading(formatPrTabTitle(pr));
-    const session = await getSession(false);
-    if (requestId !== detailsRequestSequence) {
-      return;
-    }
-    if (!session) {
-      detailsPanel.showMessage(formatPrTabTitle(pr), "Sign in to GitHub to load pull request details.");
-      return;
-    }
-    try {
-      const details = await fetchPrDetails(session.accessToken, pr.id, pr.headRefName);
-      if (requestId === detailsRequestSequence) {
-        currentDetails = details;
-        detailsPanel.showDetails(details);
-      }
-    } catch (error) {
-      if (requestId === detailsRequestSequence) {
-        detailsPanel.showMessage(formatPrTabTitle(pr), `Failed to load pull request details: ${toErrorMessage(error)}`);
-      }
-    }
-  }
-
-  // background counterpart of openPrDetails, run on every poll cycle: it reads the request
-  // sequence without bumping it (a user click mid-fetch always wins), never reveals the panel,
-  // and failures stay silent — the last good render must survive (same philosophy as the poll)
-  async function refreshOpenDetails(): Promise<void> {
-    const pr = currentDetailsPr;
-    if (!pr || !detailsPanel.isVisible || mutationInFlight || composerHasText) {
-      return;
-    }
-    const requestId = detailsRequestSequence;
-    const session = await getSession(false);
-    if (!session || requestId !== detailsRequestSequence) {
-      return;
-    }
-    try {
-      const details = await fetchPrDetails(session.accessToken, pr.id, pr.headRefName);
-      if (requestId !== detailsRequestSequence || mutationInFlight || composerHasText) {
-        return;
-      }
-      if (JSON.stringify(details) === JSON.stringify(currentDetails)) {
-        return; // unchanged snapshot: skip the re-render, a full HTML replace resets the scroll
-      }
-      currentDetails = details;
-      detailsPanel.updateDetails(details);
-    } catch (error) {
-      output.appendLine(`[${new Date().toISOString()}] Details refresh failed: ${toErrorMessage(error)}`);
-    }
-  }
-
-  async function runPrMutation(
-    pr: IPullRequest,
-    actionLabel: string,
-    successMessage: string,
-    mutate: (token: string) => Promise<void>,
-  ): Promise<void> {
-    const session = await getSession(false);
-    if (!session) {
-      composerHasText = false; // this render drops the composer too
-      detailsPanel.showMessage(formatPrTabTitle(pr), "Sign in to GitHub to act on pull requests.");
-      return;
-    }
-    mutationInFlight = true;
-    try {
-      await mutate(session.accessToken);
-      void vscode.window.showInformationMessage(successMessage);
-      void refresh();
-      void openPrDetails(pr);
-      // GitHub reads lag behind writes (search index, review decision): the immediate
-      // refreshes above often return stale data, so schedule one delayed catch-up pass
-      clearTimeout(postMutationTimer);
-      postMutationTimer = setTimeout(() => void refresh(), POST_MUTATION_REFRESH_DELAY_MS);
-    } catch (error) {
-      void vscode.window.showErrorMessage(`${actionLabel} failed: ${toErrorMessage(error)}`);
-      detailsPanel.reenableActions();
-    } finally {
-      mutationInFlight = false;
-    }
-  }
-
-  async function handlePanelMessage(pr: IPullRequest, message: IPanelMessage): Promise<void> {
-    if (message.command === "comment") {
-      const commentText = message.text.trim();
-      if (!commentText) {
-        detailsPanel.reenableActions();
-        return;
-      }
-      await runPrMutation(pr, "Comment", `Comment posted on: ${pr.title}`, (token) => addPrComment(token, pr.id, commentText));
-      return;
-    }
-
-    if (message.command === "review") {
-      const isRequestingChanges = message.event === "REQUEST_CHANGES";
-      const reviewText = message.text.trim();
-      if (isRequestingChanges && !reviewText) {
-        void vscode.window.showWarningMessage("Request changes needs a comment explaining what to change.");
-        detailsPanel.reenableActions();
-        return;
-      }
-      const actionLabel = isRequestingChanges ? "Request changes" : "Approve";
-      const successMessage = isRequestingChanges ? `Changes requested on: ${pr.title}` : `Approved: ${pr.title}`;
-      const confirmation = await vscode.window.showWarningMessage(`${actionLabel}: "${pr.title}"?`, { modal: true }, actionLabel);
-      if (confirmation !== actionLabel) {
-        detailsPanel.reenableActions();
-        return;
-      }
-      await runPrMutation(pr, actionLabel, successMessage, (token) => submitPrReview(token, pr.id, message.event, reviewText));
-      return;
-    }
-
-    if (message.command === "merge") {
-      // never trust the webview: the method must be one the repo actually allows
-      const isAllowedMethod = currentDetails?.mergeMethods.includes(message.method) ?? false;
-      if (!isAllowedMethod) {
-        detailsPanel.reenableActions();
-        return;
-      }
-      const methodLabel = MERGE_METHOD_LABELS[message.method];
-      const confirmation = await vscode.window.showWarningMessage(`${methodLabel}: "${pr.title}" into ${currentDetails?.baseRefName}?`, { modal: true }, "Merge");
-      if (confirmation !== "Merge") {
-        detailsPanel.reenableActions();
-        return;
-      }
-      await runPrMutation(pr, "Merge", `Merged: ${pr.title}`, (token) => mergePr(token, pr.id, message.method));
-      return;
-    }
-
-    if (message.command === "readyForReview") {
-      await runPrMutation(pr, "Ready for review", `Marked as ready for review: ${pr.title}`, (token) => markPrReadyForReview(token, pr.id));
-      return;
-    }
-
-    if (message.command === "updateBranch") {
-      // never trust the webview: only the two known update methods are accepted
-      const isKnownMethod = message.method === "REBASE" || message.method === "MERGE";
-      if (!isKnownMethod) {
-        detailsPanel.reenableActions();
-        return;
-      }
-      const methodLabel = UPDATE_METHOD_LABELS[message.method];
-      await runPrMutation(pr, methodLabel, `Branch updated (${message.method.toLowerCase()}): ${pr.title}`, (token) => updatePrBranch(token, pr.id, message.method));
-      return;
-    }
-
-    if (message.command === "checkout") {
-      await checkoutPrBranch();
-    }
-  }
-
-  async function checkoutPrBranch(): Promise<void> {
-    if (!currentDetails) {
-      detailsPanel.reenableActions();
-      return;
-    }
-    if (currentDetails.headRepo !== currentDetails.repo) {
-      // ponytail: cross-fork checkout needs pull/N/head refspecs — use GitHub until it hurts
-      void vscode.window.showErrorMessage("Checkout of cross-fork PRs is not supported. Open the PR on GitHub instead.");
-      detailsPanel.reenableActions();
-      return;
-    }
-    await checkoutBranch(currentDetails.repo, currentDetails.headRefName);
-    detailsPanel.reenableActions();
-  }
-
   async function addMutedEntry(entry: string): Promise<void> {
-    const config = vscode.workspace.getConfiguration("githubControlCenter");
+    const config = ghccConfig();
     const mutedEntries = config.get<string[]>("mutedRepos", []);
     const isAlreadyMuted = mutedEntries.some((existing) => existing.trim().toLowerCase() === entry.toLowerCase());
     if (!isAlreadyMuted) {
@@ -509,7 +366,7 @@ export function activate(context: vscode.ExtensionContext): void {
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
     function buildItems(typedText: string): IMuteQuickPickItem[] {
-      const mutedEntries = vscode.workspace.getConfiguration("githubControlCenter").get<string[]>("mutedRepos", []);
+      const mutedEntries = ghccConfig().get<string[]>("mutedRepos", []);
       const listedEntries = new Set(mutedEntries.map((entry) => entry.trim().toLowerCase()));
       const items: IMuteQuickPickItem[] = mutedEntries.map((entry) => ({
         label: `$(mute) ${entry}`,
@@ -570,7 +427,7 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage(`Muted ${selected.entry}`);
         return;
       }
-      const config = vscode.workspace.getConfiguration("githubControlCenter");
+      const config = ghccConfig();
       const remainingEntries = config
         .get<string[]>("mutedRepos", [])
         .filter((entry) => entry.trim().toLowerCase() !== selected.entry.trim().toLowerCase());
@@ -600,17 +457,37 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
-  detailsPanel.onMessage((message) => {
-    // tracked before the in-flight guard: typing during a mutation must still update the flag
-    if (message.command === "composerState") {
-      composerHasText = message.hasText;
-      return;
-    }
-    if (!currentDetailsPr || mutationInFlight) {
-      return;
-    }
-    void handlePanelMessage(currentDetailsPr, message);
+  const detailsSession = new DetailsSession({
+    panel: detailsPanel,
+    getSession,
+    fetchPrDetails,
+    loadPrFiles,
+    ensurePatches,
+    briefStore,
+    persistBriefs,
+    aiConfig,
+    detectAi,
+    runAiPrompt,
+    addPrComment,
+    submitPrReview,
+    mergePr,
+    markPrReadyForReview,
+    updatePrBranch,
+    checkout: checkoutBranch,
+    refresh,
+    notify: {
+      info: (message) => void vscode.window.showInformationMessage(message),
+      warning: (message) => void vscode.window.showWarningMessage(message),
+      error: (message) => void vscode.window.showErrorMessage(message),
+    },
+    promptModal: async (message, action) => {
+      const choice = await vscode.window.showWarningMessage(message, { modal: true }, action);
+      return choice === action;
+    },
+    log: (message) => output.appendLine(message),
   });
+
+  detailsPanel.onMessage((message) => detailsSession.handleMessage(message));
 
   function showPrToast(message: string, pr: IPullRequest): void {
     void vscode.window.showInformationMessage(message, "Open", "Settings").then((action) => {
@@ -660,8 +537,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     try {
       const snapshot = await fetchPullRequests(session.accessToken);
-      knownRepos = new Set([...snapshot.toReview, ...snapshot.mine, ...snapshot.reviewed].map((pr) => pr.repo));
-      const config = vscode.workspace.getConfiguration("githubControlCenter");
+      const allPrs = [...snapshot.toReview, ...snapshot.mine, ...snapshot.reviewed];
+      knownRepos = new Set(allPrs.map((pr) => pr.repo));
+      // re-points the open-panel PR at the fresh snapshot entry (raw, pre-filter) before silently
+      // refreshing it: without this, headRefOid freezes at click time and a push would keep
+      // serving the stale brief cache key
+      detailsSession.onPollSnapshot(allPrs);
+      const config = ghccConfig();
       // filters run before providers, badge and trackers: lists, badge and toasts must always agree
       const visibleSnapshot = applyFilters(snapshot, {
         mutedRepos: config.get("mutedRepos", []),
@@ -681,21 +563,48 @@ export function activate(context: vscode.ExtensionContext): void {
       const notificationsEnabled = config.get("notifications.enabled", true);
       notifyNewPrs(visibleSnapshot.toReview, notificationsEnabled);
       notifyReviewDecisions(visibleSnapshot.mine, notificationsEnabled);
+      pollScheduler.recordSuccess();
     } catch (error) {
       // poll failures stay silent: keep the last good data, no error toast every 2.5 minutes
       output.appendLine(`[${new Date().toISOString()}] Poll failed: ${toErrorMessage(error)}`);
+      pollScheduler.recordFailure(); // next cycle backs off (e.g. GitHub secondary rate limit)
     }
-    void refreshOpenDetails();
+    // independent of the poll's own success/failure: refreshOpenDetails runs its own fetch
+    void detailsSession.refreshOpenDetails();
   }
 
-  const pollTimer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
+  // cadence is dynamic (backoff + focus pause), so a self-rescheduling setTimeout replaces a fixed setInterval
+  const pollScheduler = new PollScheduler();
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  // the window starts unfocused on some platforms/session-restore paths; the initial poll below
+  // always runs once regardless, this only gates the recurring cadence
+  let pollPaused = !vscode.window.state.focused;
+
+  function scheduleNextPoll(): void {
+    if (pollPaused) {
+      return;
+    }
+    pollTimer = setTimeout(() => void pollCycle(), pollScheduler.nextDelay());
+  }
+
+  async function pollCycle(): Promise<void> {
+    await refresh();
+    scheduleNextPoll();
+  }
 
   context.subscriptions.push(
     toReviewView,
     mineView,
     output,
-    { dispose: () => clearInterval(pollTimer) },
-    { dispose: () => clearTimeout(postMutationTimer) },
+    { dispose: () => clearTimeout(pollTimer) },
+    { dispose: () => detailsSession.dispose() },
+    vscode.window.onDidChangeWindowState((windowState) => {
+      pollPaused = !windowState.focused;
+      clearTimeout(pollTimer);
+      if (windowState.focused) {
+        void pollCycle(); // immediate catch-up refresh, then resumes the normal cadence
+      }
+    }),
     vscode.commands.registerCommand("githubControlCenter.refresh", () => void refresh()),
     vscode.commands.registerCommand("githubControlCenter.signIn", async () => {
       await getSession(true);
@@ -735,7 +644,11 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.window.showInformationMessage(`Muted everything from ${organization}`);
     }),
     vscode.commands.registerCommand("githubControlCenter.manageMutedRepos", manageMutedRepos),
-    vscode.commands.registerCommand("githubControlCenter.openPrDetails", (pr: IPullRequest) => void openPrDetails(pr)),
+    vscode.commands.registerCommand("githubControlCenter.clearBriefCache", () => {
+      detailsSession.clearBriefCache();
+      void vscode.window.showInformationMessage("AI brief cache cleared.");
+    }),
+    vscode.commands.registerCommand("githubControlCenter.openPrDetails", (pr: IPullRequest) => void detailsSession.openPrDetails(pr)),
     vscode.workspace.registerTextDocumentContentProvider(PR_URI_SCHEME, contentProvider),
     vscode.commands.registerCommand("githubControlCenter.openFileDiff", (node: IFileNode) => void openFileDiff(node)),
     vscode.commands.registerCommand("githubControlCenter.review.resolveThread", (thread: vscode.CommentThread) => void runThreadMutation(thread, "Resolve conversation", resolveThread)),
@@ -749,10 +662,10 @@ export function activate(context: vscode.ExtensionContext): void {
       void vscode.commands.executeCommand("workbench.action.addComment", { fileComment: true });
     }),
     vscode.commands.registerCommand("githubControlCenter.viewFilesAsList", () => {
-      void vscode.workspace.getConfiguration("githubControlCenter").update("files.layout", "flat", vscode.ConfigurationTarget.Global);
+      void ghccConfig().update("files.layout", "flat", vscode.ConfigurationTarget.Global);
     }),
     vscode.commands.registerCommand("githubControlCenter.viewFilesAsTree", () => {
-      void vscode.workspace.getConfiguration("githubControlCenter").update("files.layout", "tree", vscode.ConfigurationTarget.Global);
+      void ghccConfig().update("files.layout", "tree", vscode.ConfigurationTarget.Global);
     }),
     reviewController,
     pendingStatusBar,
@@ -765,20 +678,36 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("githubControlCenter")) {
-        publishFilesLayoutContext();
-        void refresh();
+      if (!event.affectsConfiguration("githubControlCenter")) {
+        return;
       }
+      if (event.affectsConfiguration("githubControlCenter.ai")) {
+        // only backend and the CLI path change availability; language/model never do, so they
+        // must not trigger a wasted `claude --version` probe on every keystroke
+        const affectsAvailability =
+          event.affectsConfiguration("githubControlCenter.ai.backend") ||
+          event.affectsConfiguration("githubControlCenter.ai.claude.command");
+        if (affectsAvailability) {
+          detailsSession.refreshAiAvailabilityIfStarted();
+        }
+        // ai keys cannot affect PR data: skip the GitHub poll unless the same event
+        // also touched settings the poll pipeline actually reads
+        const touchesPollSettings = NON_AI_SECTIONS.some((section) => event.affectsConfiguration(section));
+        if (!touchesPollSettings) {
+          return;
+        }
+      }
+      publishFilesLayoutContext();
+      void refresh();
     }),
   );
 
   publishFilesLayoutContext();
+  // AI detection is lazy (first PR panel open): no CLI spawn in a window that never opens one
 
-  void refresh();
-}
-
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  // the initial poll always runs once (even in an unfocused window) so lists/badge populate on
+  // startup; pollCycle's own reschedule then honors pollPaused for every cycle after this one
+  void pollCycle();
 }
 
 export function deactivate(): void {}

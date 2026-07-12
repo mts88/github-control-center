@@ -23,7 +23,7 @@ yarn test         # Vitest, single run
 yarn test:watch   # Vitest watch mode
 ```
 
-Run a single test file: `yarn vitest run src/github.spec.ts`.
+Run a single test file: `yarn vitest run src/github/github.spec.ts`.
 
 ## Manual verification
 
@@ -31,9 +31,9 @@ Press `F5` in VSCode to launch the Extension Development Host (the `npm: build` 
 
 ## Testing
 
-Specs are co-located in `src/*.spec.ts`. The `vscode` module does not exist outside the extension host: `vitest.config.mts` aliases it to the stub in `tests/vscode-mock.ts` — extend the stub when a test needs more of the API. `fetch` is stubbed per-test with `vi.stubGlobal`.
+Specs are co-located in `src/**/*.spec.ts`, one folder per domain (`github/`, `tree/`, `panel/`, `review/`, `brief/`, `poll/`, `core/`) — `extension.ts` is the only file that stays at `src/`. The `vscode` module does not exist outside the extension host: `vitest.config.mts` aliases it to the stub in `tests/vscode-mock.ts` — extend the stub when a test needs more of the API. `fetch` is stubbed per-test with `vi.stubGlobal`.
 
-Pure modules are pure on purpose: `PrDetailsHtml.ts` (rendering) and `NewPrTracker.ts` (notification anti-spam) have no `vscode` import so they stay unit-testable. Keep them that way.
+Pure modules are pure on purpose: `panel/PrDetailsHtml.ts` (rendering) and `poll/NewPrTracker.ts` (notification anti-spam) have no `vscode` import so they stay unit-testable. Keep them that way.
 
 ## Architecture and invariants
 
