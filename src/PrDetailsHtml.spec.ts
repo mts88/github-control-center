@@ -517,6 +517,26 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain("<p>plain intro line</p>");
     });
 
+    it("should treat '*' and '+' bullets like '-' bullets", () => {
+      const html = renderWithBrief({ status: "done", text: "* first\n+ second" });
+
+      expect(html).toContain("<ul><li>first</li><li>second</li></ul>");
+    });
+
+    it("should format headings of any depth, not just '## '", () => {
+      const html = renderWithBrief({ status: "done", text: "# Top\n### Nested" });
+
+      expect(html).toContain('<div class="brief-heading">Top</div>');
+      expect(html).toContain('<div class="brief-heading">Nested</div>');
+    });
+
+    it("should keep a '**bold**' line as bold text, not mistake it for a '*' bullet", () => {
+      const html = renderWithBrief({ status: "done", text: "**Heads up**: read this" });
+
+      // a paragraph, not a list item — the '**' is bold, not a bullet marker
+      expect(html).toContain("<p><strong>Heads up</strong>: read this</p>");
+    });
+
     it("should format numbered lines as an ordered list", () => {
       const html = renderWithBrief({ status: "done", text: "## Suggested reading order\n1. read this\n2. then that" });
 

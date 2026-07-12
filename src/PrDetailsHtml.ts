@@ -293,9 +293,10 @@ function formatBriefInline(text: string): string {
 }
 
 // the system prompt constrains the model to '## ' title lines and '- ' bullets, but models
-// reliably slip into '1.' numbered lists for ordering and backticks around identifiers —
-// the walker accepts both list kinds and renders backtick spans as inline code;
-// everything is escaped, model output stays inert
+// reliably slip past it: other heading depths ('#'..'######'), '*'/'+' bullets, '1.' numbered
+// lists, backtick code and '**bold**'. The walker absorbs those markers rather than fighting the
+// model; everything is escaped, so model output stays inert. Underscore/single-'*' italics are
+// deliberately NOT parsed — they collide with snake_case identifiers common in a code summary.
 function renderBriefText(text: string): string {
   const parts: string[] = [];
   let listItems: string[] = [];
@@ -319,13 +320,15 @@ function renderBriefText(text: string): string {
       flushList();
       continue;
     }
-    if (trimmed.startsWith("## ")) {
+    const heading = /^#{1,6}\s+(.*)$/.exec(trimmed);
+    if (heading) {
       flushList();
-      parts.push(`<div class="brief-heading">${formatBriefInline(trimmed.slice(3))}</div>`);
+      parts.push(`<div class="brief-heading">${formatBriefInline(heading[1])}</div>`);
       continue;
     }
-    if (trimmed.startsWith("- ")) {
-      pushListItem("ul", trimmed.slice(2));
+    const bulletItem = /^[-*+]\s+(.*)$/.exec(trimmed);
+    if (bulletItem) {
+      pushListItem("ul", bulletItem[1]);
       continue;
     }
     const numberedItem = /^\d+\.\s+(.*)$/.exec(trimmed);
