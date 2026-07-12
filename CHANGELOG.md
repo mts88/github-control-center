@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/mts88/github-control-center/compare/v1.6.2...v1.7.0) (2026-07-10)
+
+
+### Features
+
+* keep already-reviewed prs visible in the to review list ([#18](https://github.com/mts88/github-control-center/issues/18)) ([d90ac15](https://github.com/mts88/github-control-center/commit/d90ac15a9d5574b8e62cd6db7df6160f260e419b))
+
 ## [1.6.2](https://github.com/mts88/github-control-center/compare/v1.6.1...v1.6.2) (2026-07-09)
 
 
