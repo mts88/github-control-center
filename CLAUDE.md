@@ -53,7 +53,7 @@ End-to-end verification stays manual: press `F5` in VSCode → Extension Develop
 
 **Zero runtime dependencies** — keep it that way. HTTP uses the native `fetch`; auth uses VSCode's built-in GitHub authentication provider. Only devDeps: typescript, esbuild, @types/*, mermaid. One deliberate exception to "no vendored code": `mermaid` is a devDep whose prebuilt bundle is copied to `dist/mermaid.min.js` by `esbuild.js` and loaded **only inside the webview**, lazily, when a PR body contains a diagram — never a CDN (CSP stays nonce-only, PR content never leaves the machine).
 
-The poll runs one cycle every 150s (`POLL_INTERVAL_MS` in `extension.ts`) plus manual refresh. Steps 1–5 are that data-flow pipeline; 6–11 are the feature subsystems it feeds.
+The poll runs one cycle every 150s base interval plus manual refresh, self-rescheduling via a `setTimeout` chain rather than a fixed `setInterval` (`PollScheduler.ts` + `pollCycle`/`scheduleNextPoll` in `extension.ts`): a pure `PollScheduler` doubles the delay on each consecutive fetch failure (capped ~20min, resets on the next success) — GitHub secondary rate limits back off instead of being hammered every 150s — and the cadence pauses while the VSCode window is unfocused (`onDidChangeWindowState`), resuming with an immediate catch-up refresh. Steps 1–5 are that data-flow pipeline; 6–11 are the feature subsystems it feeds.
 
 ### 1. Auth & session — `github.ts`
 
@@ -162,7 +162,7 @@ No checkout required, works on fork PRs — contents come from the API pinned to
 ## Behavioral invariants (do not break)
 
 - **Toast anti-spam seeding**: the first successful fetch only seeds `NewPrTracker` without notifying — a window reload must never fire a toast storm. Toasts start from the second poll.
-- **Silent poll failures**: fetch errors go to the "GitHub Control Center" OutputChannel and the last good data stays on screen. Never surface an error toast from the poll loop.
+- **Silent poll failures**: fetch errors go to the "GitHub Control Center" OutputChannel and the last good data stays on screen. Never surface an error toast from the poll loop. The `PollScheduler` backoff is the same philosophy applied to cadence: repeated failures slow the polling down instead of surfacing anything to the user.
 - **Badge count follows the `githubControlCenter.badge.*` settings** — `countToReview` (default on), `countMine` (default off), and `countReviewed` (default off) each add their list's length; the default keeps the original behavior (only PRs actually waiting on you count). Badge is set to `undefined` (not `{value: 0}`) when the configured count is 0.
 - **Both trackers (`NewPrTracker`, `ReviewDecisionTracker`) run every poll even with `githubControlCenter.notifications.enabled` off** — only the toasts are gated. Skipping a tracker would replay the whole backlog as a toast storm when notifications are re-enabled.
 - **Filters run before everything**: `applyFilters` (muted repos, hide drafts) is applied to the snapshot before providers, badge, and trackers — lists, badge, and toasts must always agree. The badge counts the FILTERED lists.

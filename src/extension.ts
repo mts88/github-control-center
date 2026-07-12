@@ -31,12 +31,12 @@ import { AsyncOidCache } from "./OidCache";
 import { PrContentProvider, fromPrUri, toPrUri } from "./PrContentProvider";
 import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
 import { formatPrTabTitle, PrDetailsPanel, type IPanelMessage } from "./PrDetailsPanel";
+import { PollScheduler } from "./PollScheduler";
 import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./PrTreeProvider";
 import { PR_URI_SCHEME } from "./prUri";
 import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
 import type { IBriefState, IPrDetails, IPrFile, IPrFilePatch, IPullRequest } from "./types";
 
-const POLL_INTERVAL_MS = 150_000;
 // GitHub reads lag behind writes: one delayed catch-up refresh after each successful mutation
 const POST_MUTATION_REFRESH_DELAY_MS = 3_000;
 const BRIEF_CACHE_STATE_KEY = "githubControlCenter.briefCache";
@@ -862,21 +862,47 @@ export function activate(context: vscode.ExtensionContext): void {
       const notificationsEnabled = config.get("notifications.enabled", true);
       notifyNewPrs(visibleSnapshot.toReview, notificationsEnabled);
       notifyReviewDecisions(visibleSnapshot.mine, notificationsEnabled);
+      pollScheduler.recordSuccess();
     } catch (error) {
       // poll failures stay silent: keep the last good data, no error toast every 2.5 minutes
       output.appendLine(`[${new Date().toISOString()}] Poll failed: ${toErrorMessage(error)}`);
+      pollScheduler.recordFailure(); // next cycle backs off (e.g. GitHub secondary rate limit)
     }
     void refreshOpenDetails();
   }
 
-  const pollTimer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
+  // cadence is dynamic (backoff + focus pause), so a self-rescheduling setTimeout replaces a fixed setInterval
+  const pollScheduler = new PollScheduler();
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  // the window starts unfocused on some platforms/session-restore paths; the initial poll below
+  // always runs once regardless, this only gates the recurring cadence
+  let pollPaused = !vscode.window.state.focused;
+
+  function scheduleNextPoll(): void {
+    if (pollPaused) {
+      return;
+    }
+    pollTimer = setTimeout(() => void pollCycle(), pollScheduler.nextDelay());
+  }
+
+  async function pollCycle(): Promise<void> {
+    await refresh();
+    scheduleNextPoll();
+  }
 
   context.subscriptions.push(
     toReviewView,
     mineView,
     output,
-    { dispose: () => clearInterval(pollTimer) },
+    { dispose: () => clearTimeout(pollTimer) },
     { dispose: () => clearTimeout(postMutationTimer) },
+    vscode.window.onDidChangeWindowState((windowState) => {
+      pollPaused = !windowState.focused;
+      clearTimeout(pollTimer);
+      if (windowState.focused) {
+        void pollCycle(); // immediate catch-up refresh, then resumes the normal cadence
+      }
+    }),
     vscode.commands.registerCommand("githubControlCenter.refresh", () => void refresh()),
     vscode.commands.registerCommand("githubControlCenter.signIn", async () => {
       await getSession(true);
@@ -982,7 +1008,9 @@ export function activate(context: vscode.ExtensionContext): void {
   publishFilesLayoutContext();
   // AI detection is lazy (first PR panel open): no CLI spawn in a window that never opens one
 
-  void refresh();
+  // the initial poll always runs once (even in an unfocused window) so lists/badge populate on
+  // startup; pollCycle's own reschedule then honors pollPaused for every cycle after this one
+  void pollCycle();
 }
 
 function toErrorMessage(error: unknown): string {
