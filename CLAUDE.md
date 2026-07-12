@@ -91,14 +91,15 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 - The "To Review" view renders `[...toReview, ...reviewed]`: already-reviewed rows sit after requested ones within each repo group, decorated with the viewer's review state ("you approved", "review stale", "you requested changes", "you commented", generic "reviewed" fallback for unknown states — the mapping in `PrTreeProvider.ts` must stay total).
 - Only `toReview` feeds `NewPrTracker`, so a reviewed→re-requested transition toasts as a new request.
 
-### 5. Details panel — `PrDetailsPanel.ts` + `PrDetailsHtml.ts`
+### 5. Details panel — `DetailsSession.ts` + `PrDetailsPanel.ts` + `PrDetailsHtml.ts`
 
 - Clicking a PR runs `githubControlCenter.openPrDetails`: details are fetched on demand (`fetchPrDetails`, `node(id:)` GraphQL query) and rendered in a **single reused webview panel** (recreated if closed).
+- `DetailsSession.ts` owns the whole panel session — which PR is open, its details/brief pairing, the mutation/confirm-modal/composer guards, and the AI brief lifecycle — as a class with **no vscode import** (deps injected, mirroring `ReviewController`), so it's unit-testable like the pure trackers; `extension.ts` only wires it up (construction, `detailsPanel.onMessage → session.handleMessage`, feeding it each poll snapshot). `PrDetailsPanel.ts` is just the webview wrapper (creates/reveals the panel, posts messages); `PrDetailsHtml.ts` is the pure renderer.
 - **Silent refresh** (`refreshOpenDetails`): while the panel is visible, each poll cycle re-fetches the open PR — skipped while the composer holds text or a mutation is in flight; sequence counter read passively (a user click mid-fetch always wins); failures logged to the OutputChannel with the last good render kept; unchanged snapshots skipped (a full HTML replace resets scroll — the webview persists scroll position per PR via `setState`).
-- Each successful mutation additionally schedules one delayed catch-up refresh (`POST_MUTATION_REFRESH_DELAY_MS`, 3s) because GitHub reads lag behind writes (search index, review decision).
+- Each successful mutation additionally schedules one delayed catch-up refresh (3s) because GitHub reads lag behind writes (search index, review decision).
 - **The page** (GitHub-like): header with state pill; conversation timeline (issue comments + review summaries, chronological); merge box (review decision, checks, mergeable, merge button with repo-allowed methods); composer (Comment / Approve / Request changes); sidebar (reviewers, labels with GitHub colors, aggregate diffstat linking to the files tab — no per-file list by design).
 - All bodies use GitHub's `bodyHTML` — pre-rendered and sanitized server-side, which is how the zero-deps rule survives without a markdown parser.
-- `PrDetailsHtml.ts` is **pure** (no vscode import) so the whole rendering is unit-testable; the panel class is just the webview wrapper.
+- `PrDetailsHtml.ts` is **pure** (no vscode import) so the whole rendering is unit-testable.
 - Inline code review threads are deliberately **NOT** rendered (the heavy part of the GitHub PR extension) — reviews link "N comments on files" to GitHub instead.
 
 ### 6. Mutations — `github.ts`
@@ -122,9 +123,9 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 
 ### 9. Checkout — `extension.ts`, webview `checkout` message
 
-- Uses the built-in `vscode.git` extension API (minimal `IGitExtension` interface, no dependency): finds the workspace repository whose remote URL contains the PR repo, `fetch` + `checkout(headRefName)` (git DWIM creates the tracking branch).
+- Uses the built-in `vscode.git` extension API (minimal `IGitExtension` interface, no dependency): finds the workspace repository whose remote URL contains the PR repo, `fetch` + `checkout(headRefName)` (git DWIM creates the tracking branch); the git plumbing stays in `extension.ts`, injected into `DetailsSession` as the `checkout` dep.
 - Cross-fork PRs are rejected with an error toast by design.
-- All actions go through modal confirmations (except plain comments) and an in-flight guard in `extension.ts`; success → toast + list refresh + panel re-fetch, failure → error toast + webview buttons re-enabled via the `reenable` message (keeps the typed comment alive).
+- All actions go through modal confirmations (except plain comments) and an in-flight guard in `DetailsSession`; success → toast + list refresh + panel re-fetch, failure → error toast + webview buttons re-enabled via the `reenable` message (keeps the typed comment alive).
 - `reenable` restores exactly the buttons `send()` froze — never buttons rendered disabled by design (brief pending/done) — and is never posted while a mutation is in flight.
 
 ### 10. Code review
@@ -152,12 +153,12 @@ No checkout required, works on fork PRs — contents come from the API pinned to
 - **State** (`briefState.ts` `BriefStore`, pure, no vscode imports — testable like `NewPrTracker`): one entry per PR; `done`/`error` pinned to the head oid they were produced on (a push resets both to idle — stale errors never blame new commits); `pending` blocks the whole PR regardless of oid (one CLI run per PR, even across a mid-generation push).
   - Summaries persist in `globalState` (FIFO cap 20, hydrated on activation — a window reload keeps the briefs; never passed to `setKeysForSync`, PR content must not leave the machine).
   - **No regenerate by design**: once a brief exists for the current head the button is disabled (tooltip says new commits re-enable it) — errors keep it enabled for retries.
-- **Load-bearing companions**:
-  - `refresh()` re-points `currentDetailsPr` at the fresh raw-snapshot entry by id, otherwise `headRefOid` would freeze at click time and a push with the panel open would keep serving the stale cache key / disabled button.
+- **Load-bearing companions** (all live inside `DetailsSession`, not `extension.ts`):
+  - `refresh()` feeds every poll snapshot to `session.onPollSnapshot(allPrs)`, which re-points the session's open PR at the fresh raw-snapshot entry by id, otherwise `headRefOid` would freeze at click time and a push with the panel open would keep serving the stale cache key / disabled button. `extension.ts` still calls `refreshOpenDetails()` itself afterward, unconditionally — the panel's own fetch is independent of whether the poll's own fetch succeeded.
   - `currentDetails` is stored paired with its `prId` and `handleBriefRequest` refuses a mismatch, so a brief click racing a PR switch can never mix one PR's description with another's patches.
   - `detectAi` runs **lazily on the first PR-panel open** (a window that never opens one spawns no `claude --version`), with a timeout so a wedged CLI cannot leave availability undetermined; its results land behind a sequence counter (same pattern as `detailsRequestSequence`) so a slow stale probe never overwrites a newer config's availability.
   - Completion re-renders only under the shared `canSilentlyUpdatePanel()` guards (panel visible, composer empty, no mutation in flight, no confirmation modal open) — a brief finished after switching PR waits in the cache, and the silent-refresh skip compares the rendered brief state alongside the details JSON, so a brief that completed while the composer held text renders on the next poll instead of stranding as "Summarizing…".
-  - An ai.*-only config change skips the GitHub poll; only an `ai.backend`/`ai.claude.command` change re-probes availability (language/model cannot affect it). AI UI hides entirely when `detectAi` fails.
+  - An ai.*-only config change skips the GitHub poll; only an `ai.backend`/`ai.claude.command` change re-probes availability (language/model cannot affect it), via `session.refreshAiAvailabilityIfStarted()` — a no-op until the first panel open has started detection. AI UI hides entirely when `detectAi` fails.
 
 ## Behavioral invariants (do not break)
 
@@ -169,9 +170,9 @@ No checkout required, works on fork PRs — contents come from the API pinned to
 - The displayed age is the PR's `createdAt` (age of the PR), not the review-request timestamp — fetching the real request time would require GitHub timeline events and was deliberately deferred.
 - `statusCheckRollup` is `null` for repos without CI → mapped to `ciState: "NONE"`, never treated as an error.
 - `activationEvents: ["onStartupFinished"]` is load-bearing: without it, badge and polling only start when the user opens the view.
-- **Details-fetch errors are NOT silent** (unlike the poll loop): they are user-initiated, so they render inside the panel. The poll loop's silence invariant is untouched.
+- **Details-fetch errors are NOT silent** (unlike the poll loop): they are user-initiated, so `DetailsSession` renders them inside the panel. The poll loop's silence invariant is untouched.
 - **Webview security**: CSP allows scripts only via a per-render nonce — `bodyHtml` values are the only raw-injected content and cannot execute. GitHub's mermaid sections (`section[data-type="mermaid"]` with the source in `data-json`) are rendered locally by the bundled mermaid (nonce'd script from `localResourceRoots`, `securityLevel: "strict"`); render failure falls back to the plain source, never a broken page. Webview messages may carry **user-typed text, the chosen merge method, and a composer-has-text boolean only** — never ids or URLs; the extension resolves the current PR itself and validates the merge method against the repo-allowed set.
-- **Stale-response guard**: `openPrDetails` uses a request sequence counter — only the latest click may render into the reused panel.
+- **Stale-response guard**: `DetailsSession.openPrDetails` uses a request sequence counter — only the latest click may render into the reused panel.
 - **Stable VSCode APIs only** (Comments API, TextDocumentContentProvider, `vscode.diff`, tree checkboxes): no proposed APIs, ever — they break VSCodium/Cursor and marketplace installs. If a change seems to need one, redesign the change.
 - **Review-mutation coordinates are hunk-derived**: the (side, line) sent to GitHub always comes from ranges computed off the REST patch for the pinned SHA — never from arbitrary editor positions. GitHub rejects out-of-diff lines ("line must be part of the diff"); a push between diff-open and comment surfaces that error as a toast and the next poll refreshes the oids.
 
