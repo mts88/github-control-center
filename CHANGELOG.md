@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/mts88/github-control-center/compare/v1.7.0...v1.8.0) (2026-07-12)
+
+
+### Features
+
+* ai "brief me" reviewer summaries via the claude code cli ([#21](https://github.com/mts88/github-control-center/issues/21)) ([a402bcb](https://github.com/mts88/github-control-center/commit/a402bcbf96b0b079f4e6f2e165397197e9516167)), closes [hi#severity](https://github.com/hi/issues/severity)
+
 # [1.7.0](https://github.com/mts88/github-control-center/compare/v1.6.2...v1.7.0) (2026-07-10)
 
 
