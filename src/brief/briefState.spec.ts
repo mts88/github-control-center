@@ -35,12 +35,12 @@ describe("BriefStore", () => {
       expect(store.getState(PR, OID_A)).toEqual({ status: "done", text: "summary" });
     });
 
-    it("should report idle for a summary generated on a superseded head oid", () => {
+    it("should report a superseded summary as stale rather than hiding it", () => {
       const store = new BriefStore();
       store.begin(PR, OID_A);
       store.complete(PR, OID_A, "summary");
 
-      expect(store.getState(PR, OID_B)).toEqual({ status: "idle" });
+      expect(store.getState(PR, OID_B)).toEqual({ status: "done", text: "summary", stale: true });
     });
 
     it("should report the error for the head oid it failed on", () => {
@@ -85,7 +85,7 @@ describe("BriefStore", () => {
       store.complete(PR, OID_A, "summary");
 
       expect(store.hasSummary(PR, OID_A)).toBe(true);
-      expect(store.hasSummary(PR, OID_B)).toBe(false);
+      expect(store.hasSummary(PR, OID_B)).toBe(false); // stale, not a cache hit — must not block regeneration
     });
   });
 

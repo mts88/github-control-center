@@ -111,6 +111,8 @@ export interface IBriefState {
   status: "unavailable" | "idle" | "pending" | "done" | "error";
   /** summary text when done, error message when error */
   text?: string;
+  /** done summary produced on an earlier head commit — kept visible but flagged outdated */
+  stale?: boolean;
 }
 
 export interface IPrDetails {

@@ -486,6 +486,22 @@ describe("renderPrDetailsHtml", () => {
       expect(html).not.toMatch(/id="brief"[^>]*disabled/);
     });
 
+    it("should keep a stale summary visible with a warning banner, header tag, and an enabled button", () => {
+      const html = renderWithBrief({ status: "done", text: "Summary", stale: true });
+
+      expect(html).toContain('<div class="brief-stale">');
+      expect(html).toContain('<span class="brief-stale-tag">outdated</span>');
+      expect(html).toContain("Summary");
+      expect(html).not.toMatch(/id="brief"[^>]*disabled/);
+    });
+
+    it("should render neither banner nor tag for a fresh summary", () => {
+      const html = renderWithBrief({ status: "done", text: "Summary" });
+
+      expect(html).not.toContain('<div class="brief-stale">');
+      expect(html).not.toContain('<span class="brief-stale-tag">');
+    });
+
     it("should render the summary as escaped plain text so model output stays inert", () => {
       const html = renderWithBrief({ status: "done", text: 'Summary <script>alert("x")</script>' });
 

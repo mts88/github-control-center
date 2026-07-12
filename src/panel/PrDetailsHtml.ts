@@ -36,6 +36,7 @@ const BASE_STYLE = `
     --gr-green: var(--vscode-charts-green, #2ea043);
     --gr-red: var(--vscode-charts-red, #f85149);
     --gr-purple: var(--vscode-charts-purple, #8957e5);
+    --gr-yellow: var(--vscode-charts-yellow, #d0a215);
     --gr-muted: var(--vscode-descriptionForeground);
     --gr-border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
     --gr-box-bg: var(--vscode-editorWidget-background, transparent);
@@ -211,6 +212,22 @@ const BASE_STYLE = `
   .brief-heading { font-weight: 600; margin: 10px 0 4px; }
   .brief-heading:first-child { margin-top: 0; }
   .brief-error { color: var(--gr-red); white-space: pre-wrap; }
+  .brief-stale {
+    border: 1px solid var(--gr-border);
+    border-left: 3px solid var(--gr-yellow);
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    font-size: 0.9em;
+    color: var(--gr-muted);
+  }
+  .brief-stale-tag {
+    margin-left: 8px;
+    font-size: 0.75em;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--gr-yellow);
+  }
   .header-actions { margin-top: 10px; display: flex; gap: 8px; }
   .brief-section summary { cursor: pointer; font-weight: 600; color: var(--gr-muted); padding: 8px 12px; }
   .brief-section[open] summary { border-bottom: 1px solid var(--gr-border); }
@@ -266,10 +283,16 @@ function renderBriefButton(brief?: IBriefState): string {
   if (!brief || brief.status === "unavailable") {
     return "";
   }
-  // done is disabled by design: the brief is a snapshot of the head commit — a new push
-  // changes the cache key and re-enables the button; error stays enabled for retries
-  const disabled = brief.status === "pending" || brief.status === "done" ? " disabled" : "";
-  const title = brief.status === "done" ? ' title="Already summarized — new commits re-enable it"' : "";
+  // a fresh done summary is disabled by design: it's a snapshot of the head commit — a new
+  // push flags it stale and re-enables the button; error stays enabled for retries too
+  const isFreshDone = brief.status === "done" && !brief.stale;
+  const disabled = brief.status === "pending" || isFreshDone ? " disabled" : "";
+  let title = "";
+  if (isFreshDone) {
+    title = ' title="Already summarized — new commits re-enable it"';
+  } else if (brief.status === "done") {
+    title = ' title="New commits since this summary — click to regenerate"';
+  }
   return `<button id="brief"${disabled}${title}>✨ Brief me</button>`;
 }
 
@@ -363,10 +386,14 @@ function renderBriefSection(brief?: IBriefState): string {
     '<svg viewBox="0 0 24 24" width="16" height="16"><g stroke="#D97757" stroke-width="3" stroke-linecap="round">' +
     '<line x1="12" y1="3" x2="12" y2="21"/><line x1="4.2" y1="7.5" x2="19.8" y2="16.5"/><line x1="19.8" y1="7.5" x2="4.2" y2="16.5"/>' +
     "</g></svg></span>";
+  const staleTag = brief.stale ? '<span class="brief-stale-tag">outdated</span>' : "";
+  const staleBanner = brief.stale
+    ? '<div class="brief-stale">⚠ New commits were pushed since this summary — it may be outdated. Click ✨ Brief me to regenerate.</div>'
+    : "";
   return `
   <details open class="box brief-section">
-    <summary>${providerAvatar}Summary</summary>
-    <div class="box-body brief-body">${content}</div>
+    <summary>${providerAvatar}Summary${staleTag}</summary>
+    <div class="box-body brief-body">${staleBanner}${content}</div>
   </details>`;
 }
 

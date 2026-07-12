@@ -40,6 +40,11 @@ export class BriefStore {
       return entry.state;
     }
     if (entry.oid !== oid) {
+      // a completed summary survives a push as a flagged-stale read instead of vanishing;
+      // a stale error still resets to idle — never blame new commits for an old failure
+      if (entry.state.status === "done") {
+        return { ...entry.state, stale: true };
+      }
       return { status: "idle" };
     }
     return entry.state;
@@ -49,8 +54,10 @@ export class BriefStore {
     return this.entries.get(prId)?.state.status === "pending";
   }
 
+  /** true only for a summary generated on this exact oid — a stale one must not block regeneration */
   hasSummary(prId: string, oid: string): boolean {
-    return this.getState(prId, oid).status === "done";
+    const state = this.getState(prId, oid);
+    return state.status === "done" && !state.stale;
   }
 
   begin(prId: string, oid: string): void {
