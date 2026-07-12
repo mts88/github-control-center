@@ -27,9 +27,9 @@ export interface IDetailsSessionDeps {
   /** the single BriefStore instance owned by extension.ts (hydrated from context.globalState) — never construct a second one */
   briefStore: BriefStore;
   persistBriefs(): void;
-  aiConfig(): { backend: string; command: string; model: string; language: string };
-  detectAi(command: string): Promise<boolean>;
-  runAiPrompt(command: string, model: string, systemPrompt: string, prompt: string): Promise<string>;
+  aiConfig(): { language: string };
+  detectAi(): Promise<boolean>;
+  runAiPrompt(systemPrompt: string, prompt: string): Promise<string>;
   addPrComment(token: string, prId: string, body: string): Promise<void>;
   submitPrReview(token: string, prId: string, event: "APPROVE" | "REQUEST_CHANGES", body: string): Promise<void>;
   mergePr(token: string, prId: string, method: MergeMethod): Promise<void>;
@@ -262,7 +262,7 @@ export class DetailsSession {
       const [files, patches] = await Promise.all([this.deps.loadPrFiles(pr), this.deps.ensurePatches(pr)]);
       const config = this.deps.aiConfig();
       const prompt = buildBriefPrompt(details.details, files, patches);
-      const summary = await this.deps.runAiPrompt(config.command, config.model, buildBriefSystemPrompt(config.language), prompt);
+      const summary = await this.deps.runAiPrompt(buildBriefSystemPrompt(config.language), prompt);
       this.deps.briefStore.complete(pr.id, pr.headRefOid, summary);
       this.deps.persistBriefs();
     } catch (error) {
@@ -401,18 +401,10 @@ export class DetailsSession {
 
   private refreshAiAvailability(): void {
     this.aiDetectionStarted = true;
-    const config = this.deps.aiConfig();
     const requestId = ++this.aiDetectSequence;
-    // only claude-code exists today; the gate keeps a future backend (#19) from silently running
-    // through the claude path
-    if (config.backend !== "claude-code") {
-      this.aiAvailable = false;
-      if (this.currentDetailsPr) {
-        this.rerenderBriefFor(this.currentDetailsPr.id); // drop the now-dead brief button from the open panel
-      }
-      return;
-    }
-    void this.deps.detectAi(config.command).then((available) => {
+    // backend selection and its own availability (binary found, unknown backend, ...) are
+    // extension.ts's concern now — this class only tracks whether *some* backend is ready
+    void this.deps.detectAi().then((available) => {
       if (requestId !== this.aiDetectSequence) {
         return; // a newer detection (or a backend switch) owns the flag now
       }

@@ -85,7 +85,7 @@ function buildDeps() {
     ensurePatches: vi.fn().mockResolvedValue(new Map()),
     briefStore: new BriefStore(),
     persistBriefs: vi.fn(),
-    aiConfig: vi.fn().mockReturnValue({ backend: "claude-code", command: "claude", model: "sonnet", language: "English" }),
+    aiConfig: vi.fn().mockReturnValue({ language: "English" }),
     detectAi: vi.fn().mockResolvedValue(false),
     runAiPrompt: vi.fn().mockResolvedValue("## What changed\n- did stuff"),
     addPrComment: vi.fn().mockResolvedValue(undefined),

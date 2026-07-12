@@ -17,7 +17,7 @@ A VSCode extension built by developers, for developers — to keep your GitHub s
 - **Code review in the editor**: expand a PR row to browse its changed files (directory tree or flat list), open real diffs pinned to the PR's commits — no checkout needed, fork PRs included — and review like on GitHub: comments on a line, a selection, or the whole file, batched into a pending review you submit as Comment / Approve / Request changes. Existing review threads show inline with reply and resolve; per-file viewed checkboxes sync with GitHub.
 - **Row shortcuts**: inline icons to check out the PR branch or open it in the browser; right-click to copy the URL or branch name, or mute the repository or its whole organization.
 - **Muting with search**: the "Manage Muted Repositories" command opens a picker that live-searches GitHub as you type — mute/unmute repositories or entire organizations in one click.
-- **AI brief** (optional, requires the [Claude Code](https://claude.com/product/claude-code) CLI): a **✨ Brief me** button in the PR details panel produces a reviewer-oriented summary grounded in the diff — what changed, risk areas, suggested reading order. See [AI features](#ai-features).
+- **AI brief** (optional, requires the [Claude Code](https://claude.com/product/claude-code) or [Codex](https://developers.openai.com/codex) CLI): a **✨ Brief me** button in the PR details panel produces a reviewer-oriented summary grounded in the diff — what changed, risk areas, suggested reading order. See [AI features](#ai-features).
 - **Zero runtime dependencies**: native `fetch`, VSCode's built-in GitHub authentication, GitHub-rendered markdown (`bodyHTML`). Mermaid diagrams are rendered by a locally bundled copy of mermaid — no CDN, nothing leaves your machine.
 
 ## Authentication
@@ -37,18 +37,20 @@ The extension uses VSCode's GitHub authentication provider with the `repo` and `
 | `githubControlCenter.toReview.hideReviewed` | `false` | Hide open PRs you already reviewed from the To Review list while they wait for a re-request. |
 | `githubControlCenter.updateBranch.defaultMethod` | `REBASE` | Method preselected for the Update branch action (`REBASE` or `MERGE`). |
 | `githubControlCenter.files.layout` | `tree` | How a PR's changed files are laid out under its row: `tree` (directory hierarchy, compacted single-child folders) or `flat` (plain list). Also toggled from the `…` menu of either view. |
-| `githubControlCenter.ai.backend` | `claude-code` | Which local AI backend powers the AI features. Claude Code is the only option today. |
+| `githubControlCenter.ai.backend` | `claude-code` | Which local AI backend powers the AI features: `claude-code` or `codex`. |
 | `githubControlCenter.ai.language` | `English` | Language AI-generated content is written in, regardless of the AI backend. |
 | `githubControlCenter.ai.claude.command` | `claude` | Path to the Claude Code CLI (machine-scoped: workspaces cannot override it). Claude Code backend only. |
 | `githubControlCenter.ai.claude.model` | `sonnet` | Model passed to `claude --model`: Sonnet, Haiku, Opus, or the CLI's configured default. Claude Code backend only. |
+| `githubControlCenter.ai.codex.command` | `codex` | Path to the OpenAI Codex CLI (machine-scoped: workspaces cannot override it). Codex backend only. |
 
 ## AI features
 
-The **✨ Brief me** button in the PR details panel generates a reviewer-oriented summary of the PR: what actually changed, where the risk is, and in what order to read the files — grounded in the diff, since titles and descriptions are often stale.
+The **✨ Brief me** button in the PR details panel generates a reviewer-oriented summary of the PR: what actually changed, where the risk is, and in what order to read the files — grounded in the diff, since titles and descriptions are often stale. Two backends are available, set with `githubControlCenter.ai.backend`; both run headlessly on your machine with no API key, using an existing subscription. When the configured backend's binary is missing, the AI features simply don't appear.
 
-- **Requires the [Claude Code](https://claude.com/product/claude-code) CLI** on your machine (`claude` on the PATH, or set `githubControlCenter.ai.claude.command`). No API key: the extension runs the CLI in headless mode with your existing Claude subscription. When the binary is missing, the AI features simply don't appear.
-- **Privacy**: the PR's title, description, file list, and patches are sent to Anthropic through your own Claude CLI — the same channel your Claude Code usage already goes through. Nothing is sent unless you click the button.
-- **Safety**: the CLI runs with all tools disabled and isolated settings, so PR content can never execute anything or read your Claude configuration. Still, the summary is generated from untrusted PR content — treat it as an aid, not a verdict.
+- **Claude Code** (default) — requires the [Claude Code CLI](https://claude.com/product/claude-code) (`claude` on the PATH, or set `githubControlCenter.ai.claude.command`), using your existing Claude subscription. The CLI runs with all tools disabled and isolated settings: PR content can never execute anything or read your Claude configuration.
+- **Codex** — requires the [OpenAI Codex CLI](https://developers.openai.com/codex), signed in (`codex login`), on your machine (`codex` on the PATH, or set `githubControlCenter.ai.codex.command`), using your existing ChatGPT subscription. The extension applies the strongest lockdown the Codex CLI documents (read-only sandbox, disabled shell/web-search/image tools, isolated config) — but Codex, unlike Claude Code, has no single flag guaranteed to disable all tool execution. ⚠️ A maliciously-crafted PR could, in principle, still make the model read local files and include them in the brief. **Use the Codex backend only for PRs whose authors you trust.**
+- **Privacy**: the PR's title, description, file list, and patches are sent to the selected backend's provider (Anthropic or OpenAI) through your own CLI — the same channel your existing usage of that CLI already goes through. Nothing is sent unless you click the button.
+- Both backends generate the summary from untrusted PR content — treat it as an aid, not a verdict.
 - Summaries are per head commit and survive VSCode restarts (stored locally, never synced): once generated, the button stays disabled until the author pushes new commits — then it re-enables and produces a fresh brief. To force regeneration (e.g. after changing the language setting), run **GitHub Control Center: Clear AI Brief Cache** from the command palette.
 
 ## Reviewing pull requests

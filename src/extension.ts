@@ -21,7 +21,8 @@ import {
   updatePrBranch,
 } from "./github/github";
 import { ReviewController, type IPatchKey } from "./review/ReviewController";
-import { detectAi, runAiPrompt } from "./brief/ai";
+import { detectAi as detectClaudeCli, runAiPrompt as runClaudeCli } from "./brief/ai";
+import { detectCodex, runCodexPrompt } from "./brief/codex";
 import { BriefStore, type PersistedBrief } from "./brief/briefState";
 import { DetailsSession } from "./panel/DetailsSession";
 import { toErrorMessage } from "./core/errors";
@@ -322,7 +323,7 @@ export function activate(context: vscode.ExtensionContext): void {
     void context.globalState.update(BRIEF_CACHE_STATE_KEY, briefStore.serialize());
   }
 
-  function aiConfig(): { backend: string; command: string; model: string; language: string } {
+  function aiConfig(): { backend: string; claudeCommand: string; codexCommand: string; model: string; language: string } {
     const config = ghccConfig();
     // model reaches `claude --model` on the (win32, shell:true) command line; keep it inside the
     // known enum so a stray value can never carry shell metacharacters into the spawn
@@ -330,7 +331,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const model = AI_MODELS.has(rawModel) ? rawModel : "sonnet";
     return {
       backend: config.get<string>("ai.backend", "claude-code"),
-      command: config.get<string>("ai.claude.command", "claude"),
+      claudeCommand: config.get<string>("ai.claude.command", "claude"),
+      codexCommand: config.get<string>("ai.codex.command", "codex"),
       model,
       language: config.get<string>("ai.language", "English"),
     };
@@ -466,8 +468,23 @@ export function activate(context: vscode.ExtensionContext): void {
     briefStore,
     persistBriefs,
     aiConfig,
-    detectAi,
-    runAiPrompt,
+    detectAi: () => {
+      const config = aiConfig();
+      if (config.backend === "codex") {
+        return detectCodex(config.codexCommand);
+      }
+      if (config.backend === "claude-code") {
+        return detectClaudeCli(config.claudeCommand);
+      }
+      return Promise.resolve(false); // unknown backend value → AI features stay hidden
+    },
+    runAiPrompt: (systemPrompt, prompt) => {
+      const config = aiConfig();
+      if (config.backend === "codex") {
+        return runCodexPrompt(config.codexCommand, systemPrompt, prompt);
+      }
+      return runClaudeCli(config.claudeCommand, config.model, systemPrompt, prompt); // default: claude-code
+    },
     addPrComment,
     submitPrReview,
     mergePr,
@@ -682,11 +699,12 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       if (event.affectsConfiguration("githubControlCenter.ai")) {
-        // only backend and the CLI path change availability; language/model never do, so they
-        // must not trigger a wasted `claude --version` probe on every keystroke
+        // only backend and the CLI paths change availability; language/model never do, so they
+        // must not trigger a wasted `--version` probe on every keystroke
         const affectsAvailability =
           event.affectsConfiguration("githubControlCenter.ai.backend") ||
-          event.affectsConfiguration("githubControlCenter.ai.claude.command");
+          event.affectsConfiguration("githubControlCenter.ai.claude.command") ||
+          event.affectsConfiguration("githubControlCenter.ai.codex.command");
         if (affectsAvailability) {
           detailsSession.refreshAiAvailabilityIfStarted();
         }
