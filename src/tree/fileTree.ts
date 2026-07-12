@@ -1,4 +1,4 @@
-import type { IPrFile } from "./types";
+import type { IPrFile } from "../core/types";
 
 export interface IFileTreeFolder {
   /** display name; compacted chains are joined with "/" (e.g. "src/utils") */

@@ -18,7 +18,7 @@ yarn test         # Vitest, single run
 yarn test:watch   # Vitest watch mode
 ```
 
-Run a single test file: `yarn vitest run src/github.spec.ts`.
+Run a single test file: `yarn vitest run src/github/github.spec.ts`.
 
 Package + install locally:
 
@@ -43,9 +43,9 @@ code --install-extension github-control-center-<version>.vsix
 
 ## Testing
 
-Vitest with specs co-located in `src/*.spec.ts`. The `vscode` module does not exist outside the extension host: `vitest.config.mts` aliases it to the minimal stub in `tests/vscode-mock.ts` (TreeItem, ThemeIcon, EventEmitter, …) — extend the stub when a test needs more of the API. The config file must keep the `.mts` extension (a `.ts` config is loaded as CJS and crashes on ESM-only deps). `fetch` is stubbed per-test with `vi.stubGlobal`.
+Vitest with specs co-located in `src/**/*.spec.ts`, one folder per domain (`github/`, `tree/`, `panel/`, `review/`, `brief/`, `poll/`, `core/`) — `extension.ts` is the only file that stays at `src/`. The `vscode` module does not exist outside the extension host: `vitest.config.mts` aliases it to the minimal stub in `tests/vscode-mock.ts` (TreeItem, ThemeIcon, EventEmitter, …) — extend the stub when a test needs more of the API. The config file must keep the `.mts` extension (a `.ts` config is loaded as CJS and crashes on ESM-only deps). `fetch` is stubbed per-test with `vi.stubGlobal`.
 
-Notification anti-spam logic lives in `NewPrTracker` (pure, no vscode imports) precisely so it stays testable — don't inline it back into `extension.ts`.
+Notification anti-spam logic lives in `poll/NewPrTracker.ts` (pure, no vscode imports) precisely so it stays testable — don't inline it back into `extension.ts`.
 
 End-to-end verification stays manual: press `F5` in VSCode → Extension Development Host → check the "GitHub Control Center" activity bar icon (see `.vscode/launch.json`, which runs `npm: build` as preLaunchTask).
 
@@ -53,15 +53,15 @@ End-to-end verification stays manual: press `F5` in VSCode → Extension Develop
 
 **Zero runtime dependencies** — keep it that way. HTTP uses the native `fetch`; auth uses VSCode's built-in GitHub authentication provider. Only devDeps: typescript, esbuild, @types/*, mermaid. One deliberate exception to "no vendored code": `mermaid` is a devDep whose prebuilt bundle is copied to `dist/mermaid.min.js` by `esbuild.js` and loaded **only inside the webview**, lazily, when a PR body contains a diagram — never a CDN (CSP stays nonce-only, PR content never leaves the machine).
 
-The poll runs one cycle every 150s base interval plus manual refresh, self-rescheduling via a `setTimeout` chain rather than a fixed `setInterval` (`PollScheduler.ts` + `pollCycle`/`scheduleNextPoll` in `extension.ts`): a pure `PollScheduler` doubles the delay on each consecutive fetch failure (capped ~20min, resets on the next success) — GitHub secondary rate limits back off instead of being hammered every 150s — and the cadence pauses while the VSCode window is unfocused (`onDidChangeWindowState`), resuming with an immediate catch-up refresh. Steps 1–5 are that data-flow pipeline; 6–11 are the feature subsystems it feeds.
+The poll runs one cycle every 150s base interval plus manual refresh, self-rescheduling via a `setTimeout` chain rather than a fixed `setInterval` (`poll/PollScheduler.ts` + `pollCycle`/`scheduleNextPoll` in `extension.ts`): a pure `PollScheduler` doubles the delay on each consecutive fetch failure (capped ~20min, resets on the next success) — GitHub secondary rate limits back off instead of being hammered every 150s — and the cadence pauses while the VSCode window is unfocused (`onDidChangeWindowState`), resuming with an immediate catch-up refresh. Steps 1–5 are that data-flow pipeline; 6–11 are the feature subsystems it feeds.
 
-### 1. Auth & session — `github.ts`
+### 1. Auth & session — `github/github.ts`
 
 - `getSession()` wraps `vscode.authentication.getSession("github", ["repo", "read:org"], ...)`.
 - The `repo` scope is **mandatory**: without it, PRs in private repositories are silently missing (the query succeeds and returns only public PRs).
 - `read:org` is required by `Team.name` in the details query — without it the whole details fetch fails with a scope error.
 
-### 2. Fetch — `github.ts` `fetchPullRequests()`
+### 2. Fetch — `github/github.ts` `fetchPullRequests()`
 
 - **One** GraphQL request with three aliased searches:
   - `toReview` — `review-requested:@me` (GitHub already expands this to include team review requests).
@@ -71,14 +71,14 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 - `PR_FIELDS` includes `viewerLatestReview { state }` → `IPullRequest.viewerReviewState`.
 - Capped at 100 results per section, no pagination.
 
-### 3. Tree views — `PrTreeProvider.ts`
+### 3. Tree views — `tree/PrTreeProvider.ts`
 
 - One provider instance per view — "To Review" → `githubControlCenter.toReview`, "My PRs" → `githubControlCenter.mine` (two separate collapsible views in the container) — each rendering its PR list grouped by repo.
 - Returns `[]` when signed out or when its list is empty so the per-view `viewsWelcome` entries in `package.json` show instead (sign-in prompt / empty state, switched by the `githubControlCenter.signedIn` context key).
 - **PR rows** are collapsible: expanding lazily loads the PR's changed files through a ctor-injected loader (cached in `extension.ts` by `AsyncOidCache` keyed on `headRefOid` — a push invalidates naturally, the 150s poll re-hits the cache; the in-flight promise is the entry, so concurrent loads share one request and failures retry). Stable `id`s (PR id / `prId:path`) let expansion survive poll refreshes; loader failures render as a message row (user-initiated → visible, poll silence untouched).
 - **File rows**: change-type icon, dirname description, diffstat tooltip, viewed checkbox, click → `githubControlCenter.openFileDiff`.
 - **Two layouts** via `githubControlCenter.files.layout` (default `tree`):
-  - `tree` — a directory hierarchy built by `fileTree.ts` (pure trie builder, VSCode-explorer-style compaction of single-child folder chains — folder ids derive from the uncompacted `path`, never the display name), folders first, no dirname descriptions.
+  - `tree` — a directory hierarchy built by `tree/fileTree.ts` (pure trie builder, VSCode-explorer-style compaction of single-child folder chains — folder ids derive from the uncompacted `path`, never the display name), folders first, no dirname descriptions.
   - `flat` — the plain list.
   - Toggled from the views' overflow menu (`viewFilesAsTree`/`viewFilesAsList`, visibility switched by the `githubControlCenter.filesLayout` context key), which just writes the setting — the config listener re-renders.
 - Folder rows carry **NO checkbox**: VSCode's automatic checkbox propagation would otherwise cascade a folder click into bulk viewed mutations.
@@ -86,23 +86,23 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 ### 4. Poll, badge & trackers — `extension.ts`
 
 - Owns the poll timer, the badge (`toReviewView.badge`, counts only `toReview`), and the toasts.
-- New-review-request detection is delegated to `NewPrTracker.ts`; approved/changes-requested detection on own PRs to `ReviewDecisionTracker.ts` (decision-level: `reviewDecision` is fetched in the poll's `PR_FIELDS`, no reviewer name).
-- The fetched snapshot passes through `applyFilters` (`filters.ts`, pure: `githubControlCenter.mutedRepos`, `githubControlCenter.toReview.hideDrafts`, `githubControlCenter.toReview.hideReviewed` — the latter empties the `reviewed` section) **before** providers, badge, and trackers.
-- The "To Review" view renders `[...toReview, ...reviewed]`: already-reviewed rows sit after requested ones within each repo group, decorated with the viewer's review state ("you approved", "review stale", "you requested changes", "you commented", generic "reviewed" fallback for unknown states — the mapping in `PrTreeProvider.ts` must stay total).
+- New-review-request detection is delegated to `poll/NewPrTracker.ts`; approved/changes-requested detection on own PRs to `poll/ReviewDecisionTracker.ts` (decision-level: `reviewDecision` is fetched in the poll's `PR_FIELDS`, no reviewer name).
+- The fetched snapshot passes through `applyFilters` (`poll/filters.ts`, pure: `githubControlCenter.mutedRepos`, `githubControlCenter.toReview.hideDrafts`, `githubControlCenter.toReview.hideReviewed` — the latter empties the `reviewed` section) **before** providers, badge, and trackers.
+- The "To Review" view renders `[...toReview, ...reviewed]`: already-reviewed rows sit after requested ones within each repo group, decorated with the viewer's review state ("you approved", "review stale", "you requested changes", "you commented", generic "reviewed" fallback for unknown states — the mapping in `tree/PrTreeProvider.ts` must stay total).
 - Only `toReview` feeds `NewPrTracker`, so a reviewed→re-requested transition toasts as a new request.
 
-### 5. Details panel — `DetailsSession.ts` + `PrDetailsPanel.ts` + `PrDetailsHtml.ts`
+### 5. Details panel — `panel/DetailsSession.ts` + `panel/PrDetailsPanel.ts` + `panel/PrDetailsHtml.ts`
 
 - Clicking a PR runs `githubControlCenter.openPrDetails`: details are fetched on demand (`fetchPrDetails`, `node(id:)` GraphQL query) and rendered in a **single reused webview panel** (recreated if closed).
-- `DetailsSession.ts` owns the whole panel session — which PR is open, its details/brief pairing, the mutation/confirm-modal/composer guards, and the AI brief lifecycle — as a class with **no vscode import** (deps injected, mirroring `ReviewController`), so it's unit-testable like the pure trackers; `extension.ts` only wires it up (construction, `detailsPanel.onMessage → session.handleMessage`, feeding it each poll snapshot). `PrDetailsPanel.ts` is just the webview wrapper (creates/reveals the panel, posts messages); `PrDetailsHtml.ts` is the pure renderer.
+- `panel/DetailsSession.ts` owns the whole panel session — which PR is open, its details/brief pairing, the mutation/confirm-modal/composer guards, and the AI brief lifecycle — as a class with **no vscode import** (deps injected, mirroring `review/ReviewController.ts`), so it's unit-testable like the pure trackers; `extension.ts` only wires it up (construction, `detailsPanel.onMessage → session.handleMessage`, feeding it each poll snapshot). `panel/PrDetailsPanel.ts` is just the webview wrapper (creates/reveals the panel, posts messages); `panel/PrDetailsHtml.ts` is the pure renderer.
 - **Silent refresh** (`refreshOpenDetails`): while the panel is visible, each poll cycle re-fetches the open PR — skipped while the composer holds text or a mutation is in flight; sequence counter read passively (a user click mid-fetch always wins); failures logged to the OutputChannel with the last good render kept; unchanged snapshots skipped (a full HTML replace resets scroll — the webview persists scroll position per PR via `setState`).
 - Each successful mutation additionally schedules one delayed catch-up refresh (3s) because GitHub reads lag behind writes (search index, review decision).
 - **The page** (GitHub-like): header with state pill; conversation timeline (issue comments + review summaries, chronological); merge box (review decision, checks, mergeable, merge button with repo-allowed methods); composer (Comment / Approve / Request changes); sidebar (reviewers, labels with GitHub colors, aggregate diffstat linking to the files tab — no per-file list by design).
 - All bodies use GitHub's `bodyHTML` — pre-rendered and sanitized server-side, which is how the zero-deps rule survives without a markdown parser.
-- `PrDetailsHtml.ts` is **pure** (no vscode import) so the whole rendering is unit-testable.
+- `panel/PrDetailsHtml.ts` is **pure** (no vscode import) so the whole rendering is unit-testable.
 - Inline code review threads are deliberately **NOT** rendered (the heavy part of the GitHub PR extension) — reviews link "N comments on files" to GitHub instead.
 
-### 6. Mutations — `github.ts`
+### 6. Mutations — `github/github.ts`
 
 - `addPrComment` (`addComment`).
 - `submitPrReview` (`addPullRequestReview` APPROVE / REQUEST_CHANGES — request changes requires a body, GitHub rule).
@@ -116,7 +116,7 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 - Inline row icons: checkout (`githubControlCenter.checkoutPr`, `$(git-branch)`) and open in browser.
 - The row checkout cannot detect fork PRs (no `headRepository` in the poll) — it just fails with the git error toast.
 
-### 8. Muting — `muting.ts` (pure)
+### 8. Muting — `poll/muting.ts` (pure)
 
 - `mutedRepos` entries are `owner/repo` (one repo) or `owner` / `owner/*` (whole organization), case-insensitive — `isRepoMuted` is the single matcher.
 - `githubControlCenter.manageMutedRepos` (command palette + view overflow menu) opens a QuickPick that lists muted entries (pick to unmute) and known repos from the last raw pre-filter snapshot (pick to mute), live-searches GitHub repositories while typing (250ms debounce, ≥3 chars, silent failures), and offers a "mute everything from X" org item for slash-less input.
@@ -132,13 +132,13 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 
 No checkout required, works on fork PRs — contents come from the API pinned to the PR's SHAs.
 
-- **Diffs**: `githubControlCenter.openFileDiff` builds two `ghcc-pr:` URIs (`prUri.ts`, pure codec: path + query `prId/repo/number/sha/headOid/side[/empty]`) and runs `vscode.diff`. `PrContentProvider.ts` (TextDocumentContentProvider) serves blob content via REST `contents` (raw media type), cached per URI with a 1MB ceiling; `empty=1` marks the synthetic side of ADDED/DELETED files. Patches (hunks + `previous_filename` for renames) come from REST `GET /pulls/{n}/files` — GraphQL has no per-file patch — cached in `AsyncOidCache` and fetched BEFORE building URIs (renames need the old LEFT path).
-- **Comments**: one global `CommentController` (`ReviewController.ts`). File-level comments have NO default VSCode entry point (`enableFileComments` only enables the capability): `githubControlCenter.review.addFileComment` (editor/title button on `ghcc-pr:` documents) runs `workbench.action.addComment` with `{fileComment: true}`. `commentingRangeProvider` gates gutters to hunk lines computed by `diffPatch.ts` (pure parser: `parseHunks`, `commentableRanges` per side) — out-of-diff comments are impossible by construction; the patch key travels in the URI (`headOid`), so ranges survive a window reload with an empty registry. Line coordinates: `reviewThreads.ts` (pure) maps GitHub 1-based ↔ editor 0-based (`toThreadAnchor`/`toThreadPosition`).
+- **Diffs**: `githubControlCenter.openFileDiff` builds two `ghcc-pr:` URIs (`review/prUri.ts`, pure codec: path + query `prId/repo/number/sha/headOid/side[/empty]`) and runs `vscode.diff`. `review/PrContentProvider.ts` (TextDocumentContentProvider) serves blob content via REST `contents` (raw media type), cached per URI with a 1MB ceiling; `empty=1` marks the synthetic side of ADDED/DELETED files. Patches (hunks + `previous_filename` for renames) come from REST `GET /pulls/{n}/files` — GraphQL has no per-file patch — cached in `AsyncOidCache` and fetched BEFORE building URIs (renames need the old LEFT path).
+- **Comments**: one global `CommentController` (`review/ReviewController.ts`). File-level comments have NO default VSCode entry point (`enableFileComments` only enables the capability): `githubControlCenter.review.addFileComment` (editor/title button on `ghcc-pr:` documents) runs `workbench.action.addComment` with `{fileComment: true}`. `commentingRangeProvider` gates gutters to hunk lines computed by `review/diffPatch.ts` (pure parser: `parseHunks`, `commentableRanges` per side) — out-of-diff comments are impossible by construction; the patch key travels in the URI (`headOid`), so ranges survive a window reload with an empty registry. Line coordinates: `review/reviewThreads.ts` (pure) maps GitHub 1-based ↔ editor 0-based (`toThreadAnchor`/`toThreadPosition`).
 - **Pending review flow**: `addReviewThread` with `pullRequestId` auto-creates/attaches to the viewer's pending review (one per user per PR, GitHub rule); "Add Single Comment" = thread + immediate `submitPullRequestReview(COMMENT)`, refused with a warning when a pending review exists (never silently submit the batch). Submit = QuickPick (Comment/Approve/Request changes — the latter requires a body) → `submitPendingReview`; Discard = modal → `deletePullRequestReview`. Pending state is discovered on first diff open (fetched with `reviewThreads` + `reviews(states:[PENDING])`), surfaced via the `githubControlCenter.hasPendingReview` context key and a status-bar item.
-- **Existing threads** render as native CommentThreads at their anchored line/side (LEFT threads on renamed files resolve the old path via the patch cache), with reply, resolve/unresolve (`commentThread == canResolve/canUnresolve` context values), "Pending"/"Resolved"/"Outdated" labels; outdated threads with `line: null` are skipped (v1). After every review mutation the controller reloads the snapshot and syncs threads **in place** via `threadSync.ts` (pure diff by thread id) — never dispose-all, or an in-progress reply box elsewhere would lose its text.
+- **Existing threads** render as native CommentThreads at their anchored line/side (LEFT threads on renamed files resolve the old path via the patch cache), with reply, resolve/unresolve (`commentThread == canResolve/canUnresolve` context values), "Pending"/"Resolved"/"Outdated" labels; outdated threads with `line: null` are skipped (v1). After every review mutation the controller reloads the snapshot and syncs threads **in place** via `review/threadSync.ts` (pure diff by thread id) — never dispose-all, or an in-progress reply box elsewhere would lose its text.
 - **Viewed state**: tree checkboxes → `markFileAsViewed`/`unmarkFileAsViewed`, optimistic update on the cached file object with revert + tree refresh on error.
 
-### 11. AI brief — `ai.ts` CLI wrapper + `briefPrompt.ts` pure prompt builder
+### 11. AI brief — `brief/ai.ts` CLI wrapper + `brief/briefPrompt.ts` pure prompt builder
 
 - **What it is**: the details panel's "✨ Brief me" button generates a reviewer-oriented summary by spawning the Claude Code CLI headless (`claude -p`) — zero runtime deps (`node:child_process`), no API key, the user's own subscription.
 - **Spawn lockdown**:
@@ -150,7 +150,7 @@ No checkout required, works on fork PRs — contents come from the API pinned to
   - `ai.language` is deliberately backend-agnostic while `ai.claude.*` keys are backend-specific (a future `vscode.lm` backend — #19 — gets its own subtree and enum entry, no breaking change). VSCode has no conditional settings visibility, so the claude keys stay visible with a "Claude Code backend only" note.
 - **Output format** (machine-parseable by contract): the system prompt allows only `## ` title lines and `- ` bullets, and `renderBriefText` styles those plus the things models emit anyway — any heading depth (`#`..`######`), `*`/`+` bullets, `1.` numbered lists (→ `<ol>`), paired backticks (→ `<code>`), and `**bold**` (→ `<strong>`), all content escaped first. Underscore/single-`*` italics are deliberately left literal (they collide with `snake_case` identifiers). Everything else renders as escaped paragraphs; never fight the model in the prompt when the renderer can absorb the drift. Model output renders **HTML-escaped** (never the raw-`bodyHtml` path).
 - **Prompt input**: title/body (labelled untrusted, the description capped), file list (capped at 300 by churn), patches under a 60KB budget (largest churn first, the top file truncated at a hunk boundary rather than dropped when it alone exceeds the budget) — all from the existing `AsyncOidCache`s, no new API calls.
-- **State** (`briefState.ts` `BriefStore`, pure, no vscode imports — testable like `NewPrTracker`): one entry per PR; `done`/`error` pinned to the head oid they were produced on (a push resets both to idle — stale errors never blame new commits); `pending` blocks the whole PR regardless of oid (one CLI run per PR, even across a mid-generation push).
+- **State** (`brief/briefState.ts` `BriefStore`, pure, no vscode imports — testable like `NewPrTracker`): one entry per PR; `done`/`error` pinned to the head oid they were produced on (a push resets both to idle — stale errors never blame new commits); `pending` blocks the whole PR regardless of oid (one CLI run per PR, even across a mid-generation push).
   - Summaries persist in `globalState` (FIFO cap 20, hydrated on activation — a window reload keeps the briefs; never passed to `setKeysForSync`, PR content must not leave the machine).
   - **No regenerate by design**: once a brief exists for the current head the button is disabled (tooltip says new commits re-enable it) — errors keep it enabled for retries.
 - **Load-bearing companions** (all live inside `DetailsSession`, not `extension.ts`):

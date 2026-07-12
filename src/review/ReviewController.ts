@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 import { commentableRanges } from "./diffPatch";
-import { fetchReviewThreads } from "./github";
+import { fetchReviewThreads } from "../github/github";
 import { fromPrUri, toPrUri } from "./PrContentProvider";
 import { PR_URI_SCHEME } from "./prUri";
 import { threadLabel, toThreadAnchor } from "./reviewThreads";
 import { syncThreads } from "./threadSync";
-import type { IPrFilePatch, IPullRequest, IReviewThread, IReviewThreadsSnapshot } from "./types";
+import type { IPrFilePatch, IPullRequest, IReviewThread, IReviewThreadsSnapshot } from "../core/types";
 
 /** The subset of IPullRequest the patch cache needs — buildable from a ghcc-pr uri alone. */
 export interface IPatchKey {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderPrDetailsHtml } from "./PrDetailsHtml";
-import type { IBriefState, IPrDetails } from "./types";
+import type { IBriefState, IPrDetails } from "../core/types";
 
 const NONCE = "test-nonce-123";
 const NOW = new Date("2026-07-08T12:00:00Z").getTime();

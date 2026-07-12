@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
-import type { IPullRequest } from "./types";
+import type { IPullRequest } from "../core/types";
 
 function buildPr(id: string, reviewDecision: string | null): IPullRequest {
   return { id, title: `PR ${id}`, reviewDecision } as IPullRequest;

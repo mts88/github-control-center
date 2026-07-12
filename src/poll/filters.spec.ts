@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyFilters } from "./filters";
-import type { IPrSnapshot, IPullRequest } from "./types";
+import type { IPrSnapshot, IPullRequest } from "../core/types";
 
 interface IPrOverrides {
   id?: string;

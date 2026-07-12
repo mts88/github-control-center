@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BriefStore } from "./briefState";
+import { BriefStore } from "../brief/briefState";
 import { DetailsSession } from "./DetailsSession";
-import type { IPrDetails, IPullRequest, UpdateBranchMethod } from "./types";
+import type { IPrDetails, IPullRequest, UpdateBranchMethod } from "../core/types";
 
 /** flushes pending microtasks (promise chains) via a real macrotask tick */
 function flush(): Promise<void> {

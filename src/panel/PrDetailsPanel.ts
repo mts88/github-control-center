@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { renderMessageHtml, renderPrDetailsHtml } from "./PrDetailsHtml";
-import type { IBriefState, IPrDetails, MergeMethod, UpdateBranchMethod } from "./types";
+import type { IBriefState, IPrDetails, MergeMethod, UpdateBranchMethod } from "../core/types";
 
 export type IPanelMessage =
   | { command: "comment"; text: string }

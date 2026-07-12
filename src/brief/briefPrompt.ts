@@ -1,5 +1,5 @@
-import { decodeHtmlEntities } from "./PrDetailsHtml";
-import type { IPrDetails, IPrFile, IPrFilePatch } from "./types";
+import { decodeHtmlEntities } from "../panel/PrDetailsHtml";
+import type { IPrDetails, IPrFile, IPrFilePatch } from "../core/types";
 
 /** patch bytes included in the prompt before degrading to list-only entries */
 export const PATCH_BUDGET_BYTES = 60_000;

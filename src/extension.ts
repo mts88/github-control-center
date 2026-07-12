@@ -19,23 +19,23 @@ import {
   submitPrReview,
   unresolveThread,
   updatePrBranch,
-} from "./github";
-import { ReviewController, type IPatchKey } from "./ReviewController";
-import { detectAi, runAiPrompt } from "./ai";
-import { BriefStore, type PersistedBrief } from "./briefState";
-import { DetailsSession } from "./DetailsSession";
-import { toErrorMessage } from "./errors";
-import { toThreadPosition } from "./reviewThreads";
-import { applyFilters } from "./filters";
-import { NewPrTracker } from "./NewPrTracker";
-import { AsyncOidCache } from "./OidCache";
-import { PrContentProvider, fromPrUri, toPrUri } from "./PrContentProvider";
-import { PrDetailsPanel } from "./PrDetailsPanel";
-import { PollScheduler } from "./PollScheduler";
-import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./PrTreeProvider";
-import { PR_URI_SCHEME } from "./prUri";
-import { ReviewDecisionTracker } from "./ReviewDecisionTracker";
-import type { IPrFile, IPrFilePatch, IPullRequest } from "./types";
+} from "./github/github";
+import { ReviewController, type IPatchKey } from "./review/ReviewController";
+import { detectAi, runAiPrompt } from "./brief/ai";
+import { BriefStore, type PersistedBrief } from "./brief/briefState";
+import { DetailsSession } from "./panel/DetailsSession";
+import { toErrorMessage } from "./core/errors";
+import { toThreadPosition } from "./review/reviewThreads";
+import { applyFilters } from "./poll/filters";
+import { NewPrTracker } from "./poll/NewPrTracker";
+import { AsyncOidCache } from "./core/OidCache";
+import { PrContentProvider, fromPrUri, toPrUri } from "./review/PrContentProvider";
+import { PrDetailsPanel } from "./panel/PrDetailsPanel";
+import { PollScheduler } from "./poll/PollScheduler";
+import { PrTreeProvider, type FilesLayout, type IFileNode, type TreeNode } from "./tree/PrTreeProvider";
+import { PR_URI_SCHEME } from "./review/prUri";
+import { ReviewDecisionTracker } from "./poll/ReviewDecisionTracker";
+import type { IPrFile, IPrFilePatch, IPullRequest } from "./core/types";
 
 const BRIEF_CACHE_STATE_KEY = "githubControlCenter.briefCache";
 // config sections that feed the poll pipeline: an event touching only ai.* keys skips the poll

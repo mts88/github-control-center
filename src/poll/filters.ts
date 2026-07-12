@@ -1,5 +1,5 @@
 import { isRepoMuted } from "./muting";
-import type { IPrSnapshot, IPullRequest } from "./types";
+import type { IPrSnapshot, IPullRequest } from "../core/types";
 
 export interface IFilterOptions {
   mutedRepos: string[];

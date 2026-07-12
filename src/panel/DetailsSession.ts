@@ -1,9 +1,9 @@
-import { buildBriefPrompt, buildBriefSystemPrompt } from "./briefPrompt";
-import type { BriefStore } from "./briefState";
-import { toErrorMessage } from "./errors";
+import { buildBriefPrompt, buildBriefSystemPrompt } from "../brief/briefPrompt";
+import type { BriefStore } from "../brief/briefState";
+import { toErrorMessage } from "../core/errors";
 import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
 import { formatPrTabTitle, type IPanelMessage } from "./PrDetailsPanel";
-import type { IBriefState, IPrDetails, IPrFile, IPrFilePatch, IPullRequest, MergeMethod, UpdateBranchMethod } from "./types";
+import type { IBriefState, IPrDetails, IPrFile, IPrFilePatch, IPullRequest, MergeMethod, UpdateBranchMethod } from "../core/types";
 
 // GitHub reads lag behind writes: one delayed catch-up refresh after each successful mutation
 const POST_MUTATION_REFRESH_DELAY_MS = 3_000;

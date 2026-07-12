@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildBriefPrompt, buildBriefSystemPrompt, MAX_BODY_CHARS, MAX_FILE_LINES, PATCH_BUDGET_BYTES } from "./briefPrompt";
-import type { IPrDetails, IPrFile, IPrFilePatch } from "./types";
+import type { IPrDetails, IPrFile, IPrFilePatch } from "../core/types";
 
 function buildDetails(overrides: Partial<IPrDetails> = {}): IPrDetails {
   return {

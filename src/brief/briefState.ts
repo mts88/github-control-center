@@ -1,4 +1,4 @@
-import type { IBriefState } from "./types";
+import type { IBriefState } from "../core/types";
 
 /** persisted shape: only completed summaries survive a window reload */
 export type PersistedBrief = [prId: string, oid: string, text: string];

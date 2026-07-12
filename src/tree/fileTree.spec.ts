@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildFileTree } from "./fileTree";
-import type { IPrFile } from "./types";
+import type { IPrFile } from "../core/types";
 
 function buildFile(path: string): IPrFile {
   return { path, changeType: "MODIFIED", additions: 1, deletions: 0, viewedState: "UNVIEWED" };

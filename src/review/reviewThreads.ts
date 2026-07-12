@@ -1,4 +1,4 @@
-import type { DiffSide, IReviewThread } from "./types";
+import type { DiffSide, IReviewThread } from "../core/types";
 
 export interface IThreadAnchor {
   path: string;

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import * as vscode from "vscode";
 import { PrTreeProvider, type TreeNode } from "./PrTreeProvider";
-import type { CiState, IPrFile, IPullRequest } from "./types";
+import type { CiState, IPrFile, IPullRequest } from "../core/types";
 
 interface IPrOverrides {
   id?: string;

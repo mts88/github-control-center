@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
-import { toErrorMessage } from "./errors";
+import { toErrorMessage } from "../core/errors";
 import { buildFileTree, type IFileTreeFolder } from "./fileTree";
-import type { CiState, FileChangeType, IPrFile, IPullRequest } from "./types";
+import type { CiState, FileChangeType, IPrFile, IPullRequest } from "../core/types";
 
 export type FilesLayout = "flat" | "tree";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { threadLabel, toThreadAnchor, toThreadPosition } from "./reviewThreads";
-import type { IReviewThread } from "./types";
+import type { IReviewThread } from "../core/types";
 
 function buildThread(overrides: Partial<IReviewThread> = {}): IReviewThread {
   return {

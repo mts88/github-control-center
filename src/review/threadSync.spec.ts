@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { syncThreads } from "./threadSync";
-import type { IReviewThread } from "./types";
+import type { IReviewThread } from "../core/types";
 
 function buildThread(id: string): IReviewThread {
   return {

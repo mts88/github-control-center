@@ -1,4 +1,4 @@
-import type { IBriefState, IPrDetails, IPrTimelineItem, MergeMethod, UpdateBranchMethod } from "./types";
+import type { IBriefState, IPrDetails, IPrTimelineItem, MergeMethod, UpdateBranchMethod } from "../core/types";
 
 export const MERGE_METHOD_LABELS: Record<MergeMethod, string> = {
   SQUASH: "Squash and merge",
