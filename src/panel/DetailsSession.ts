@@ -1,9 +1,21 @@
 import { buildBriefPrompt, buildBriefSystemPrompt } from "../brief/briefPrompt";
 import type { BriefStore } from "../brief/briefState";
 import { toErrorMessage } from "../core/errors";
+import { anchorFindings, parseFindings } from "../review/reviewFindings";
+import { buildReviewPrompt, buildReviewSystemPrompt } from "../review/reviewPrompt";
+import type { IReviewState, ReviewStore } from "../review/reviewState";
 import { MERGE_METHOD_LABELS, UPDATE_METHOD_LABELS } from "./PrDetailsHtml";
 import { formatPrTabTitle, type IPanelMessage } from "./PrDetailsPanel";
-import type { IBriefState, IPrDetails, IPrFile, IPrFilePatch, IPullRequest, MergeMethod, UpdateBranchMethod } from "../core/types";
+import type { DiffSide, IBriefState, IPrDetails, IPrFile, IPrFilePatch, IPullRequest, MergeMethod, UpdateBranchMethod } from "../core/types";
+
+/** the DI shape of a promoted finding, built from an IAnchoredFinding's LINE/FILE variant */
+export interface IReviewDraftInput {
+  path: string;
+  subjectType: "LINE" | "FILE";
+  body: string;
+  line?: number;
+  side?: DiffSide;
+}
 
 // GitHub reads lag behind writes: one delayed catch-up refresh after each successful mutation
 const POST_MUTATION_REFRESH_DELAY_MS = 3_000;
@@ -12,8 +24,8 @@ const POST_MUTATION_REFRESH_DELAY_MS = 3_000;
 export interface IDetailsSessionPanel {
   showLoading(title: string): void;
   showMessage(title: string, message: string): void;
-  showDetails(details: IPrDetails, brief?: IBriefState): void;
-  updateDetails(details: IPrDetails, brief?: IBriefState): void;
+  showDetails(details: IPrDetails, brief?: IBriefState, review?: IReviewState, canPickReviewModel?: boolean): void;
+  updateDetails(details: IPrDetails, brief?: IBriefState, review?: IReviewState, canPickReviewModel?: boolean): void;
   readonly isVisible: boolean;
   reenableActions(): void;
 }
@@ -27,9 +39,15 @@ export interface IDetailsSessionDeps {
   /** the single BriefStore instance owned by extension.ts (hydrated from context.globalState) — never construct a second one */
   briefStore: BriefStore;
   persistBriefs(): void;
-  aiConfig(): { backend: string; command: string; model: string; language: string };
-  detectAi(command: string): Promise<boolean>;
-  runAiPrompt(command: string, model: string, systemPrompt: string, prompt: string): Promise<string>;
+  /** the single ReviewStore instance owned by extension.ts — never persisted, unlike briefStore */
+  reviewStore: ReviewStore;
+  aiConfig(): { language: string; backend: string };
+  detectAi(): Promise<boolean>;
+  runAiPrompt(systemPrompt: string, prompt: string): Promise<string>;
+  runAiReview(systemPrompt: string, prompt: string, modelOverride?: string): Promise<string>;
+  insertReviewDraft(pr: IPullRequest, input: IReviewDraftInput): Promise<void>;
+  /** resolves undefined on cancel or when the current backend has no model concept (e.g. codex) */
+  pickReviewModel(): Promise<string | undefined>;
   addPrComment(token: string, prId: string, body: string): Promise<void>;
   submitPrReview(token: string, prId: string, event: "APPROVE" | "REQUEST_CHANGES", body: string): Promise<void>;
   mergePr(token: string, prId: string, method: MergeMethod): Promise<void>;
@@ -63,6 +81,12 @@ export class DetailsSession {
   // JSON of the brief state last drawn into the panel: silent refreshes redraw when either the
   // details or the brief changed — comparing details alone would strand a finished brief
   private lastRenderedBrief: string | undefined;
+  // same purpose as lastRenderedBrief, for the AI review section
+  private lastRenderedReview: string | undefined;
+  // in-flight promote guard, keyed by `${prId}:${index}`: promoted state is only committed to
+  // reviewStore once GitHub actually accepts the draft, so a fast double-click needs its own
+  // guard rather than relying on ReviewStore.markPromoted alone
+  private readonly promotingFindingKeys = new Set<string>();
   private detailsRequestSequence = 0;
   private mutationInFlight = false;
   // a confirmation modal is open: the webview has already frozen its buttons but mutationInFlight
@@ -129,7 +153,8 @@ export class DetailsSession {
       }
       const detailsUnchanged = JSON.stringify(details) === JSON.stringify(this.currentDetails?.details);
       const briefUnchanged = JSON.stringify(this.currentBriefState(pr)) === this.lastRenderedBrief;
-      if (detailsUnchanged && briefUnchanged) {
+      const reviewUnchanged = JSON.stringify(this.currentReviewState(pr)) === this.lastRenderedReview;
+      if (detailsUnchanged && briefUnchanged && reviewUnchanged) {
         return; // unchanged snapshot: skip the re-render, a full HTML replace resets the scroll
       }
       this.presentDetails(pr, details, "silent");
@@ -188,15 +213,18 @@ export class DetailsSession {
   }
 
   // the single exit point for rendering the panel: it keeps details paired with their PR and
-  // records the drawn brief state so silent refreshes can tell when a redraw is actually needed
+  // records the drawn brief/review state so silent refreshes can tell when a redraw is needed
   private presentDetails(pr: IPullRequest, details: IPrDetails, mode: "reveal" | "silent"): void {
     const brief = this.currentBriefState(pr);
+    const review = this.currentReviewState(pr);
+    const canPickReviewModel = this.aiAvailable && this.deps.aiConfig().backend === "claude-code";
     this.currentDetails = { prId: pr.id, details };
     this.lastRenderedBrief = JSON.stringify(brief);
+    this.lastRenderedReview = JSON.stringify(review);
     if (mode === "reveal") {
-      this.deps.panel.showDetails(details, brief);
+      this.deps.panel.showDetails(details, brief, review, canPickReviewModel);
     } else {
-      this.deps.panel.updateDetails(details, brief);
+      this.deps.panel.updateDetails(details, brief, review, canPickReviewModel);
     }
   }
 
@@ -224,6 +252,13 @@ export class DetailsSession {
     return this.deps.briefStore.getState(pr.id, pr.headRefOid);
   }
 
+  private currentReviewState(pr: IPullRequest): IReviewState | undefined {
+    if (!this.aiAvailable) {
+      return undefined;
+    }
+    return this.deps.reviewStore.getState(pr.id, pr.headRefOid);
+  }
+
   // re-render carrying the current brief state, under the same guards as refreshOpenDetails:
   // never another PR's panel, never over a composer draft, never during a mutation
   private rerenderBriefFor(prId: string): void {
@@ -245,6 +280,24 @@ export class DetailsSession {
     this.presentDetails(pr, this.currentDetails.details, "silent");
   }
 
+  // review counterpart of rerenderBriefFor, same guards
+  private rerenderReviewFor(prId: string): void {
+    const pr = this.currentDetailsPr;
+    if (!pr || pr.id !== prId || !this.currentDetails || this.currentDetails.prId !== pr.id) {
+      return;
+    }
+    if (!this.canSilentlyUpdatePanel()) {
+      if (!this.mutationInFlight && !this.confirmModalOpen) {
+        this.deps.panel.reenableActions();
+      }
+      return;
+    }
+    if (JSON.stringify(this.currentReviewState(pr)) === this.lastRenderedReview) {
+      return;
+    }
+    this.presentDetails(pr, this.currentDetails.details, "silent");
+  }
+
   private async handleBriefRequest(pr: IPullRequest): Promise<void> {
     const details = this.currentDetails;
     // details must belong to the requesting PR: a brief click racing a PR switch would otherwise
@@ -262,7 +315,7 @@ export class DetailsSession {
       const [files, patches] = await Promise.all([this.deps.loadPrFiles(pr), this.deps.ensurePatches(pr)]);
       const config = this.deps.aiConfig();
       const prompt = buildBriefPrompt(details.details, files, patches);
-      const summary = await this.deps.runAiPrompt(config.command, config.model, buildBriefSystemPrompt(config.language), prompt);
+      const summary = await this.deps.runAiPrompt(buildBriefSystemPrompt(config.language), prompt);
       this.deps.briefStore.complete(pr.id, pr.headRefOid, summary);
       this.deps.persistBriefs();
     } catch (error) {
@@ -270,6 +323,79 @@ export class DetailsSession {
       this.deps.log(`[${new Date().toISOString()}] Brief failed: ${toErrorMessage(error)}`);
     } finally {
       this.rerenderBriefFor(pr.id);
+    }
+  }
+
+  // unlike the brief, a review is deliberately re-runnable once done (the model-override picker
+  // implies rerunning) — only isPending blocks a second concurrent run, there is no cache-hit path
+  private async handleReviewRequest(pr: IPullRequest, modelOverride?: string): Promise<void> {
+    const details = this.currentDetails;
+    if (!this.aiAvailable || !details || details.prId !== pr.id || this.deps.reviewStore.isPending(pr.id)) {
+      return;
+    }
+    this.deps.reviewStore.begin(pr.id, pr.headRefOid);
+    this.rerenderReviewFor(pr.id); // shows "Reviewing…"
+    try {
+      const [files, patches] = await Promise.all([this.deps.loadPrFiles(pr), this.deps.ensurePatches(pr)]);
+      const config = this.deps.aiConfig();
+      const prompt = buildReviewPrompt(details.details, files, patches);
+      const raw = await this.deps.runAiReview(buildReviewSystemPrompt(config.language), prompt, modelOverride);
+      const parsed = parseFindings(raw);
+      if (parsed.kind === "report") {
+        this.deps.reviewStore.completeReport(pr.id, pr.headRefOid, parsed.text);
+      } else {
+        this.deps.reviewStore.completeFindings(pr.id, pr.headRefOid, anchorFindings(parsed.findings, files, patches));
+      }
+    } catch (error) {
+      this.deps.reviewStore.fail(pr.id, pr.headRefOid, toErrorMessage(error));
+      this.deps.log(`[${new Date().toISOString()}] AI review failed: ${toErrorMessage(error)}`);
+    } finally {
+      this.rerenderReviewFor(pr.id);
+    }
+  }
+
+  private async handleReviewWithPickedModel(pr: IPullRequest): Promise<void> {
+    // undefined means cancelled — "" is a deliberate choice (CLI default) and must still run
+    const model = await this.deps.pickReviewModel();
+    if (model === undefined) {
+      this.deps.panel.reenableActions();
+      return;
+    }
+    await this.handleReviewRequest(pr, model);
+  }
+
+  // promoted state is only committed once GitHub actually accepts the draft (the store's own
+  // markPromoted guard is the final authority on bounds/oid/duplicates); the manual checks here
+  // just avoid a wasted API call for an obviously invalid click
+  private async handlePromoteFinding(pr: IPullRequest, index: number): Promise<void> {
+    const key = `${pr.id}:${index}`;
+    if (this.promotingFindingKeys.has(key)) {
+      return;
+    }
+    const state = this.deps.reviewStore.getState(pr.id, pr.headRefOid);
+    if (state.status !== "done" || !state.findings || state.stale) {
+      this.deps.panel.reenableActions();
+      return;
+    }
+    const finding = state.findings[index];
+    const alreadyPromoted = state.promotedIndices?.includes(index) ?? false;
+    if (!finding || alreadyPromoted || finding.subjectType === "UNANCHORABLE") {
+      this.deps.panel.reenableActions();
+      return;
+    }
+    const input: IReviewDraftInput =
+      finding.subjectType === "LINE"
+        ? { path: finding.path, subjectType: "LINE", side: finding.side, line: finding.line, body: finding.comment }
+        : { path: finding.path, subjectType: "FILE", body: finding.comment };
+    this.promotingFindingKeys.add(key);
+    try {
+      await this.deps.insertReviewDraft(pr, input);
+      this.deps.reviewStore.markPromoted(pr.id, pr.headRefOid, index);
+    } catch (error) {
+      this.deps.notify.error(`Failed to insert draft comment: ${toErrorMessage(error)}`);
+    } finally {
+      this.promotingFindingKeys.delete(key);
+      this.rerenderReviewFor(pr.id);
     }
   }
 
@@ -364,6 +490,18 @@ export class DetailsSession {
         await this.handleBriefRequest(pr);
         return;
       }
+      case "aiReview": {
+        await this.handleReviewRequest(pr);
+        return;
+      }
+      case "aiReviewPickModel": {
+        await this.handleReviewWithPickedModel(pr);
+        return;
+      }
+      case "promoteFinding": {
+        await this.handlePromoteFinding(pr, message.index);
+        return;
+      }
       case "checkout": {
         await this.checkoutPrBranch();
         return;
@@ -401,24 +539,17 @@ export class DetailsSession {
 
   private refreshAiAvailability(): void {
     this.aiDetectionStarted = true;
-    const config = this.deps.aiConfig();
     const requestId = ++this.aiDetectSequence;
-    // only claude-code exists today; the gate keeps a future backend (#19) from silently running
-    // through the claude path
-    if (config.backend !== "claude-code") {
-      this.aiAvailable = false;
-      if (this.currentDetailsPr) {
-        this.rerenderBriefFor(this.currentDetailsPr.id); // drop the now-dead brief button from the open panel
-      }
-      return;
-    }
-    void this.deps.detectAi(config.command).then((available) => {
+    // backend selection and its own availability (binary found, unknown backend, ...) are
+    // extension.ts's concern now — this class only tracks whether *some* backend is ready
+    void this.deps.detectAi().then((available) => {
       if (requestId !== this.aiDetectSequence) {
         return; // a newer detection (or a backend switch) owns the flag now
       }
       this.aiAvailable = available;
       if (this.currentDetailsPr) {
         this.rerenderBriefFor(this.currentDetailsPr.id); // the open panel reflects the new availability
+        this.rerenderReviewFor(this.currentDetailsPr.id);
       }
     });
   }

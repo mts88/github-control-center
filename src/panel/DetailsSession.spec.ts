@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BriefStore } from "../brief/briefState";
+import { ReviewStore } from "../review/reviewState";
 import { DetailsSession } from "./DetailsSession";
 import type { IPrDetails, IPullRequest, UpdateBranchMethod } from "../core/types";
 
@@ -85,9 +86,13 @@ function buildDeps() {
     ensurePatches: vi.fn().mockResolvedValue(new Map()),
     briefStore: new BriefStore(),
     persistBriefs: vi.fn(),
-    aiConfig: vi.fn().mockReturnValue({ backend: "claude-code", command: "claude", model: "sonnet", language: "English" }),
+    reviewStore: new ReviewStore(),
+    aiConfig: vi.fn().mockReturnValue({ language: "English", backend: "claude-code" }),
     detectAi: vi.fn().mockResolvedValue(false),
     runAiPrompt: vi.fn().mockResolvedValue("## What changed\n- did stuff"),
+    runAiReview: vi.fn().mockResolvedValue("[]"),
+    insertReviewDraft: vi.fn().mockResolvedValue(undefined),
+    pickReviewModel: vi.fn().mockResolvedValue(undefined),
     addPrComment: vi.fn().mockResolvedValue(undefined),
     submitPrReview: vi.fn().mockResolvedValue(undefined),
     mergePr: vi.fn().mockResolvedValue(undefined),
@@ -219,7 +224,7 @@ describe("DetailsSession", () => {
 
       await session.refreshOpenDetails();
 
-      expect(deps.panel.updateDetails).toHaveBeenCalledWith(updated, undefined);
+      expect(deps.panel.updateDetails).toHaveBeenCalledWith(updated, undefined, undefined, false);
     });
 
     it("skips the re-render when the fetched snapshot is unchanged", async () => {
@@ -454,7 +459,7 @@ describe("DetailsSession", () => {
       session.onPollSnapshot([freshPr]);
       await session.refreshOpenDetails();
 
-      expect(deps.panel.updateDetails).toHaveBeenCalledWith(differentDetails, { status: "done", text: "fresh summary" });
+      expect(deps.panel.updateDetails).toHaveBeenCalledWith(differentDetails, { status: "done", text: "fresh summary" }, { status: "idle" }, true);
     });
   });
 
@@ -473,7 +478,269 @@ describe("DetailsSession", () => {
 
       expect(deps.briefStore.getState(pr.id, pr.headRefOid)).toEqual({ status: "idle" });
       expect(deps.persistBriefs).toHaveBeenCalled();
-      expect(deps.panel.updateDetails).toHaveBeenCalledWith(expect.anything(), { status: "idle" });
+      expect(deps.panel.updateDetails).toHaveBeenCalledWith(expect.anything(), { status: "idle" }, { status: "idle" }, true);
+    });
+  });
+
+  describe("AI review lifecycle", () => {
+    it("does nothing when AI is unavailable", async () => {
+      const pr = buildPr();
+      const deps = buildDeps(); // detectAi defaults to unavailable
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+
+      expect(deps.runAiReview).not.toHaveBeenCalled();
+    });
+
+    it("refuses a review click racing a PR switch", async () => {
+      const prA = buildPr({ id: "A" });
+      const prB = buildPr({ id: "B" });
+      let resolveB: (details: IPrDetails) => void = () => {};
+      const deps = buildAiDeps();
+      deps.fetchPrDetails = vi
+        .fn()
+        .mockResolvedValueOnce(buildDetails())
+        .mockImplementationOnce(() => new Promise<IPrDetails>((resolve) => { resolveB = resolve; }));
+      const session = new DetailsSession(deps);
+
+      await session.openPrDetails(prA); // currentDetails now paired with "A"
+      await flush(); // aiAvailable settles true
+
+      void session.openPrDetails(prB); // currentDetailsPr moves to "B"; its fetch is still pending
+      await flush();
+
+      session.handleMessage({ command: "aiReview" }); // resolves pr internally to "B"
+      await flush();
+
+      expect(deps.runAiReview).not.toHaveBeenCalled();
+
+      resolveB(buildDetails());
+      await flush();
+    });
+
+    it("does not start a second review run while one is pending", async () => {
+      const pr = buildPr();
+      let resolveRun: (text: string) => void = () => {};
+      const deps = buildAiDeps();
+      deps.runAiReview = vi.fn(() => new Promise<string>((resolve) => { resolveRun = resolve; }));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+      session.handleMessage({ command: "aiReview" }); // second click while pending
+      await flush();
+
+      expect(deps.runAiReview).toHaveBeenCalledTimes(1);
+
+      resolveRun("[]");
+      await flush();
+    });
+
+    it("allows a second review run even after the first completed, unlike the brief", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+
+      expect(deps.runAiReview).toHaveBeenCalledTimes(2);
+    });
+
+    it("parses JSON findings and anchors them against the PR's files and patches", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.loadPrFiles = vi.fn().mockResolvedValue([{ path: "a.ts", changeType: "MODIFIED", additions: 1, deletions: 0, viewedState: "UNVIEWED" }]);
+      deps.ensurePatches = vi.fn().mockResolvedValue(new Map([["a.ts", { path: "a.ts", patch: "@@ -1,2 +1,2 @@\n line1\n+const x = 1;" }]]));
+      deps.runAiReview = vi
+        .fn()
+        .mockResolvedValue(JSON.stringify([{ path: "a.ts", side: "RIGHT", snippet: "const x = 1;", line: 2, severity: "issue", comment: "bug" }]));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+
+      expect(deps.reviewStore.getState(pr.id, pr.headRefOid)).toEqual({
+        status: "done",
+        findings: [{ subjectType: "LINE", path: "a.ts", side: "RIGHT", line: 2, severity: "issue", comment: "bug" }],
+        promotedIndices: [],
+      });
+    });
+
+    it("falls back to a plain-text report when the model output cannot be parsed as JSON", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.runAiReview = vi.fn().mockResolvedValue("Looks fine overall.");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+
+      expect(deps.reviewStore.getState(pr.id, pr.headRefOid)).toEqual({ status: "done", reportText: "Looks fine overall." });
+    });
+
+    it("records the error and does not throw when the CLI run fails", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.runAiReview = vi.fn().mockRejectedValue(new Error("cli failed"));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+
+      expect(deps.reviewStore.getState(pr.id, pr.headRefOid).status).toBe("error");
+      expect(deps.log).toHaveBeenCalled();
+    });
+  });
+
+  describe("AI review — promote finding", () => {
+    async function openWithOneFinding(deps: ReturnType<typeof buildAiDeps>, pr: IPullRequest): Promise<DetailsSession> {
+      deps.loadPrFiles = vi.fn().mockResolvedValue([{ path: "a.ts", changeType: "MODIFIED", additions: 1, deletions: 0, viewedState: "UNVIEWED" }]);
+      deps.ensurePatches = vi.fn().mockResolvedValue(new Map([["a.ts", { path: "a.ts", patch: "@@ -1,2 +1,2 @@\n line1\n+const x = 1;" }]]));
+      deps.runAiReview = vi
+        .fn()
+        .mockResolvedValue(JSON.stringify([{ path: "a.ts", side: "RIGHT", snippet: "const x = 1;", line: 2, severity: "issue", comment: "bug" }]));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+      session.handleMessage({ command: "aiReview" });
+      await flush();
+      return session;
+    }
+
+    it("promotes an anchored finding to a real draft comment", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      const session = await openWithOneFinding(deps, pr);
+
+      session.handleMessage({ command: "promoteFinding", index: 0 });
+      await flush();
+
+      expect(deps.insertReviewDraft).toHaveBeenCalledWith(pr, { path: "a.ts", subjectType: "LINE", side: "RIGHT", line: 2, body: "bug" });
+      expect(deps.reviewStore.getState(pr.id, pr.headRefOid).promotedIndices).toEqual([0]);
+    });
+
+    it("refuses an out-of-bounds index without calling insertReviewDraft", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      const session = await openWithOneFinding(deps, pr);
+
+      session.handleMessage({ command: "promoteFinding", index: 5 });
+      await flush();
+
+      expect(deps.insertReviewDraft).not.toHaveBeenCalled();
+    });
+
+    it("refuses to promote the same finding twice", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      const session = await openWithOneFinding(deps, pr);
+
+      session.handleMessage({ command: "promoteFinding", index: 0 });
+      await flush();
+      deps.insertReviewDraft.mockClear();
+
+      session.handleMessage({ command: "promoteFinding", index: 0 });
+      await flush();
+
+      expect(deps.insertReviewDraft).not.toHaveBeenCalled();
+    });
+
+    it("leaves the finding promotable again after a GitHub rejection", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.insertReviewDraft = vi.fn().mockRejectedValue(new Error("line must be part of the diff"));
+      const session = await openWithOneFinding(deps, pr);
+
+      session.handleMessage({ command: "promoteFinding", index: 0 });
+      await flush();
+
+      expect(deps.notify.error).toHaveBeenCalled();
+      expect(deps.reviewStore.getState(pr.id, pr.headRefOid).promotedIndices).toEqual([]);
+    });
+  });
+
+  describe("AI review — model override", () => {
+    it("does nothing when the user cancels the model picker", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.pickReviewModel = vi.fn().mockResolvedValue(undefined);
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReviewPickModel" });
+      await flush();
+
+      expect(deps.runAiReview).not.toHaveBeenCalled();
+    });
+
+    it("runs the review when the user explicitly picks the CLI default (empty string), unlike a cancel", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.pickReviewModel = vi.fn().mockResolvedValue("");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReviewPickModel" });
+      await flush();
+
+      expect(deps.runAiReview).toHaveBeenCalledWith(expect.any(String), expect.any(String), "");
+    });
+
+    it("runs the review with the picked model", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.pickReviewModel = vi.fn().mockResolvedValue("opus");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+      await flush();
+
+      session.handleMessage({ command: "aiReviewPickModel" });
+      await flush();
+
+      expect(deps.runAiReview).toHaveBeenCalledWith(expect.any(String), expect.any(String), "opus");
+    });
+  });
+
+  describe("AI review — model picker visibility", () => {
+    it("tells the panel the model picker is unavailable outside the claude-code backend", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      deps.aiConfig = vi.fn().mockReturnValue({ language: "English", backend: "codex" });
+      const session = new DetailsSession(deps);
+
+      await session.openPrDetails(pr);
+      await flush(); // aiAvailable settles true
+
+      expect(deps.panel.showDetails).toHaveBeenLastCalledWith(expect.anything(), { status: "idle" }, { status: "idle" }, false);
+    });
+
+    it("tells the panel the model picker is available for the claude-code backend", async () => {
+      const pr = buildPr();
+      const deps = buildAiDeps();
+      const session = new DetailsSession(deps);
+
+      await session.openPrDetails(pr);
+      await flush(); // aiAvailable settles true
+
+      expect(deps.panel.showDetails).toHaveBeenLastCalledWith(expect.anything(), { status: "idle" }, { status: "idle" }, true);
     });
   });
 

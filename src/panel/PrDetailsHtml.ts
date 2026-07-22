@@ -1,3 +1,5 @@
+import type { FindingSeverity, IAnchoredFinding } from "../review/reviewFindings";
+import type { IReviewState } from "../review/reviewState";
 import type { IBriefState, IPrDetails, IPrTimelineItem, MergeMethod, UpdateBranchMethod } from "../core/types";
 
 export const MERGE_METHOD_LABELS: Record<MergeMethod, string> = {
@@ -228,10 +230,24 @@ const BASE_STYLE = `
     text-transform: uppercase;
     color: var(--gr-yellow);
   }
-  .header-actions { margin-top: 10px; display: flex; gap: 8px; }
-  .brief-section summary { cursor: pointer; font-weight: 600; color: var(--gr-muted); padding: 8px 12px; }
-  .brief-section[open] summary { border-bottom: 1px solid var(--gr-border); }
+  .header-actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
+  .brief-section summary, .review-section summary { cursor: pointer; font-weight: 600; color: var(--gr-muted); padding: 8px 12px; }
+  .brief-section[open] summary, .review-section[open] summary { border-bottom: 1px solid var(--gr-border); }
   .brief-avatar { display: flex; align-items: center; justify-content: center; }
+  .link-button { background: none; padding: 0; color: var(--vscode-textLink-foreground); font-size: 0.92em; }
+  .link-button:hover:not(:disabled) { text-decoration: underline; }
+  .finding { padding: 10px 0; border-bottom: 1px solid var(--gr-border); }
+  .finding:last-child { border-bottom: none; }
+  .finding-meta { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+  .finding-severity { font-weight: 600; font-size: 0.85em; text-transform: uppercase; }
+  .finding-issue .finding-severity { color: var(--gr-red); }
+  .finding-warning .finding-severity { color: var(--gr-yellow); }
+  .finding-info .finding-severity { color: var(--gr-muted); }
+  .finding-path { font-family: var(--gr-mono); font-size: 0.92em; }
+  .finding-line { color: var(--gr-muted); }
+  .finding-comment { margin-bottom: 6px; }
+  .finding-inserted { color: var(--gr-green); font-size: 0.92em; }
+  .finding-unanchorable { color: var(--gr-muted); font-size: 0.92em; }
 `;
 
 export function escapeHtml(value: string): string {
@@ -294,16 +310,6 @@ function renderBriefButton(brief?: IBriefState): string {
     title = ' title="New commits since this summary — click to regenerate"';
   }
   return `<button id="brief"${disabled}${title}>✨ Brief me</button>`;
-}
-
-// dedicated row under the state pill — future action buttons land here too
-function renderHeaderActions(brief?: IBriefState): string {
-  const briefButton = renderBriefButton(brief);
-  if (!briefButton) {
-    return "";
-  }
-  return `
-    <div class="header-actions">${briefButton}</div>`;
 }
 
 // escape first, then style paired backticks and ** bold **: the wrapped content is
@@ -397,7 +403,101 @@ function renderBriefSection(brief?: IBriefState): string {
   </details>`;
 }
 
-function renderHeader(details: IPrDetails, brief?: IBriefState): string {
+function renderReviewButton(review?: IReviewState): string {
+  if (!review) {
+    return "";
+  }
+  const disabled = review.status === "pending" ? " disabled" : "";
+  const title = review.status === "pending" ? ' title="Review in progress"' : ' title="Runs a fresh AI review"';
+  return `<button id="ai-review"${disabled}${title}>🔍 AI Review</button>`;
+}
+
+// unlike the brief button, this is not gated on review.status: the model picker is available
+// whenever the backend supports it, independent of whether a review has run yet
+function renderReviewModelLink(review: IReviewState | undefined, canPickReviewModel: boolean | undefined): string {
+  if (!review || !canPickReviewModel) {
+    return "";
+  }
+  const disabled = review.status === "pending" ? " disabled" : "";
+  return `<button id="ai-review-model" class="link-button"${disabled}>Change model…</button>`;
+}
+
+// dedicated row under the state pill — future action buttons land here too
+function renderHeaderActions(brief?: IBriefState, review?: IReviewState, canPickReviewModel?: boolean): string {
+  const actions = [renderBriefButton(brief), renderReviewButton(review), renderReviewModelLink(review, canPickReviewModel)].filter(Boolean).join("");
+  if (!actions) {
+    return "";
+  }
+  return `
+    <div class="header-actions">${actions}</div>`;
+}
+
+const SEVERITY_LABELS: Record<FindingSeverity, string> = { info: "Info", warning: "Warning", issue: "Issue" };
+
+function renderFindingBadge(finding: IAnchoredFinding): string {
+  if (finding.subjectType === "LINE") {
+    return ` <span class="finding-line">L${finding.line} · ${finding.side}</span>`;
+  }
+  if (finding.subjectType === "FILE") {
+    return ` <span class="finding-line">file-level</span>`;
+  }
+  return "";
+}
+
+function renderFindingAction(finding: IAnchoredFinding, index: number, promoted: boolean): string {
+  if (finding.subjectType === "UNANCHORABLE") {
+    return '<span class="finding-unanchorable">Unknown file — not insertable</span>';
+  }
+  if (promoted) {
+    return '<span class="finding-inserted">Inserted ✓</span>';
+  }
+  const label = finding.subjectType === "LINE" ? "Insert as draft" : "Insert as file comment";
+  return `<button class="finding-promote" data-index="${index}">${label}</button>`;
+}
+
+function renderFinding(finding: IAnchoredFinding, index: number, promotedIndices: number[]): string {
+  const promoted = promotedIndices.includes(index);
+  return `
+    <div class="finding finding-${finding.severity}">
+      <div class="finding-meta">
+        <span class="finding-severity">${SEVERITY_LABELS[finding.severity]}</span>
+        <span class="finding-path">${escapeHtml(finding.path)}${renderFindingBadge(finding)}</span>
+      </div>
+      <div class="finding-comment">${escapeHtml(finding.comment)}</div>
+      <div class="finding-actions">${renderFindingAction(finding, index, promoted)}</div>
+    </div>`;
+}
+
+function renderReviewSection(review?: IReviewState): string {
+  if (!review || review.status === "idle") {
+    return "";
+  }
+  let content: string;
+  if (review.status === "pending") {
+    content = "Reviewing…";
+  } else if (review.status === "error") {
+    content = `<span class="brief-error">${escapeHtml(review.text ?? "")}</span>`;
+  } else if (review.findings) {
+    const promotedIndices = review.promotedIndices ?? [];
+    content =
+      review.findings.length > 0
+        ? review.findings.map((finding, index) => renderFinding(finding, index, promotedIndices)).join("")
+        : '<p class="neutral">No findings.</p>';
+  } else {
+    content = renderBriefText(review.reportText ?? "");
+  }
+  const staleTag = review.stale ? '<span class="brief-stale-tag">outdated</span>' : "";
+  const staleBanner = review.stale
+    ? '<div class="brief-stale">⚠ New commits were pushed since this review — it may be outdated. Click 🔍 AI Review to regenerate.</div>'
+    : "";
+  return `
+  <details open class="box review-section">
+    <summary>🔍 AI Review${staleTag}</summary>
+    <div class="box-body brief-body">${staleBanner}${content}</div>
+  </details>`;
+}
+
+function renderHeader(details: IPrDetails, brief?: IBriefState, review?: IReviewState, canPickReviewModel?: boolean): string {
   const pill = details.state === "OPEN" && details.isDraft ? { css: "draft", label: "Draft" } : PILLS[details.state];
   const repoUrl = details.url.replace(/\/pull\/\d+$/, "");
   return `
@@ -414,7 +514,7 @@ function renderHeader(details: IPrDetails, brief?: IBriefState): string {
         into <span class="branch">${escapeHtml(details.baseRefName)}</span>
         from <span class="branch">${escapeHtml(details.headRefName)}</span>
       </span>
-    </div>${renderHeaderActions(brief)}
+    </div>${renderHeaderActions(brief, review, canPickReviewModel)}
   </header>`;
 }
 
@@ -662,6 +762,8 @@ export function renderPrDetailsHtml(
   mermaidScriptUri?: string,
   defaultUpdateMethod: UpdateBranchMethod = "REBASE",
   brief?: IBriefState,
+  review?: IReviewState,
+  canPickReviewModel?: boolean,
 ): string {
   const processedDetails: IPrDetails = {
     ...details,
@@ -673,10 +775,11 @@ export function renderPrDetailsHtml(
   const mermaidSupport = renderMermaidSupport(processedDetails, nonce, mermaidScriptUri);
 
   const body = `
-  ${renderHeader(processedDetails, brief)}
+  ${renderHeader(processedDetails, brief, review, canPickReviewModel)}
   <div class="layout">
     <main>
       ${renderBriefSection(brief)}
+      ${renderReviewSection(review)}
       <div class="timeline">
         ${renderDescription(processedDetails, now)}
         ${timelineItems}
@@ -734,6 +837,36 @@ export function renderPrDetailsHtml(
         vscodeApi.postMessage({ command: "brief" });
       });
     }
+
+    // same self-disabling pattern as brief, for the AI review button and its model picker
+    let reviewClickPending = false;
+    const reviewButton = document.getElementById("ai-review");
+    if (reviewButton) {
+      reviewButton.addEventListener("click", () => {
+        reviewButton.disabled = true;
+        reviewClickPending = true;
+        vscodeApi.postMessage({ command: "aiReview" });
+      });
+    }
+    const reviewModelButton = document.getElementById("ai-review-model");
+    if (reviewModelButton) {
+      reviewModelButton.addEventListener("click", () => {
+        reviewModelButton.disabled = true;
+        reviewClickPending = true;
+        vscodeApi.postMessage({ command: "aiReviewPickModel" });
+      });
+    }
+
+    // one promote button per finding, dynamically many: each tracks its own pending index so a
+    // reenable (no silent render possible, e.g. the composer holds text) restores only itself
+    let pendingPromoteIndices = new Set();
+    document.querySelectorAll(".finding-promote").forEach((button) => {
+      button.addEventListener("click", () => {
+        button.disabled = true;
+        pendingPromoteIndices.add(button.dataset.index);
+        vscodeApi.postMessage({ command: "promoteFinding", index: Number(button.dataset.index) });
+      });
+    });
 
     function syncComposerButtons() {
       const hasText = composerText.value.trim().length > 0;
@@ -794,6 +927,17 @@ export function renderPrDetailsHtml(
           briefButton.disabled = false;
         }
         briefClickPending = false;
+        if (reviewClickPending) {
+          if (reviewButton) { reviewButton.disabled = false; }
+          if (reviewModelButton) { reviewModelButton.disabled = false; }
+        }
+        reviewClickPending = false;
+        document.querySelectorAll(".finding-promote").forEach((button) => {
+          if (pendingPromoteIndices.has(button.dataset.index)) {
+            button.disabled = false;
+          }
+        });
+        pendingPromoteIndices = new Set();
         syncComposerButtons();
       }
     });
