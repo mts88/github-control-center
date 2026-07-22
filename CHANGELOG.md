@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/mts88/github-control-center/compare/v1.8.0...v1.8.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* disable Approve when the viewer's review is still current ([#23](https://github.com/mts88/github-control-center/issues/23)) ([ed4d784](https://github.com/mts88/github-control-center/commit/ed4d784e599a759c0e353b0017b69041df6cf688))
+
 # [1.8.0](https://github.com/mts88/github-control-center/compare/v1.7.0...v1.8.0) (2026-07-12)
 
 
