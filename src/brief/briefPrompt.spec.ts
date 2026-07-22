@@ -27,6 +27,7 @@ function buildDetails(overrides: Partial<IPrDetails> = {}): IPrDetails {
     mergeMethods: ["SQUASH"],
     reviewDecision: null,
     viewerDidAuthor: false,
+    canApprove: true,
     reviewers: [],
     checks: [],
     checksTotal: 0,
