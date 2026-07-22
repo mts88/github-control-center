@@ -30,6 +30,7 @@ function buildDetails(overrides: Partial<IPrDetails> = {}): IPrDetails {
     mergeMethods: ["SQUASH", "MERGE"],
     reviewDecision: "REVIEW_REQUIRED",
     viewerDidAuthor: false,
+    canApprove: true,
     reviewers: [{ name: "luigi", state: "APPROVED" }],
     checks: [{ name: "build", status: "SUCCESS" }],
     checksTotal: 1,
@@ -414,6 +415,19 @@ describe("renderPrDetailsHtml", () => {
 
       expect(html).toContain('id="approve"');
       expect(html).toContain('id="request-changes"');
+    });
+
+    it("should disable Approve with a tooltip when the viewer's approval is still current", () => {
+      const html = render({ canApprove: false });
+
+      expect(html).toMatch(/<button id="approve"[^>]*\bdisabled\b[^>]*>/);
+      expect(html).toContain('title="You already approved this Pull Request"');
+    });
+
+    it("should keep Approve enabled when the viewer can approve", () => {
+      const html = render({ canApprove: true });
+
+      expect(html).not.toMatch(/<button id="approve"[^>]*\bdisabled\b/);
     });
   });
 

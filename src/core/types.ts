@@ -139,6 +139,8 @@ export interface IPrDetails {
   mergeMethods: MergeMethod[];
   reviewDecision: string | null;
   viewerDidAuthor: boolean;
+  /** false when the viewer's latest review is still a current APPROVED (same commit, no fresh re-request) */
+  canApprove: boolean;
   reviewers: IPrReviewer[];
   checks: IPrCheck[];
   checksTotal: number;

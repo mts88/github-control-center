@@ -79,6 +79,7 @@ interface IGraphQlPrNode {
 
 const DETAILS_QUERY = `
   query ($id: ID!, $headRef: String!) {
+    viewer { login }
     node(id: $id) {
       ... on PullRequest {
         number
@@ -92,6 +93,7 @@ const DETAILS_QUERY = `
         bodyHTML
         baseRefName
         headRefName
+        headRefOid
         headRepository { nameWithOwner }
         baseRef { compare(headRef: $headRef) { behindBy } }
         changedFiles
@@ -105,7 +107,7 @@ const DETAILS_QUERY = `
           nodes { requestedReviewer { ... on User { login } ... on Team { name } } }
         }
         latestReviews(first: 30) {
-          nodes { author { login } state }
+          nodes { author { login } state commit { oid } }
         }
         comments(last: 30) {
           totalCount
@@ -200,6 +202,7 @@ interface IGraphQlDetailsNode {
   bodyHTML: string;
   baseRefName: string;
   headRefName: string;
+  headRefOid: string;
   headRepository: { nameWithOwner: string } | null;
   baseRef: { compare: { behindBy: number } | null } | null;
   changedFiles: number;
@@ -210,7 +213,7 @@ interface IGraphQlDetailsNode {
   reviewDecision: string | null;
   viewerDidAuthor: boolean;
   reviewRequests: { nodes: Array<{ requestedReviewer: { login?: string; name?: string } | null }> };
-  latestReviews: { nodes: Array<{ author: { login: string } | null; state: string }> };
+  latestReviews: { nodes: Array<{ author: { login: string } | null; state: string; commit: { oid: string } | null }> };
   comments: {
     totalCount: number;
     nodes: Array<{ author: IGraphQlActor | null; bodyHTML: string; createdAt: string }>;
@@ -323,11 +326,14 @@ export async function fetchPullRequests(token: string): Promise<IPrSnapshot> {
 }
 
 export async function fetchPrDetails(token: string, prId: string, headRefName: string): Promise<IPrDetails> {
-  const data = await postGraphQl<{ node: IGraphQlDetailsNode | null }>(token, DETAILS_QUERY, { id: prId, headRef: headRefName });
+  const data = await postGraphQl<{ viewer: { login: string }; node: IGraphQlDetailsNode | null }>(token, DETAILS_QUERY, {
+    id: prId,
+    headRef: headRefName,
+  });
   if (!data.node) {
     throw new Error("Pull request not found");
   }
-  return toPrDetails(data.node);
+  return toPrDetails(data.node, data.viewer.login);
 }
 
 export async function addPrComment(token: string, prId: string, body: string): Promise<void> {
@@ -659,7 +665,19 @@ function isSameRepoPr(node: IGraphQlDetailsNode): boolean {
   return !node.headRepository || node.headRepository.nameWithOwner === node.repository.nameWithOwner;
 }
 
-function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
+function toCanApprove(node: IGraphQlDetailsNode, viewerLogin: string): boolean {
+  // ponytail: re-request detection only covers individual reviewRequests entries (toReviewers'
+  // REQUESTED override) — a re-request routed through the viewer's team instead of them by name
+  // won't be picked up here; team-membership resolution would need extra API calls.
+  const effectiveState = toReviewers(node).find((reviewer) => reviewer.name === viewerLogin)?.state ?? null;
+  if (effectiveState !== "APPROVED") {
+    return true;
+  }
+  const viewerReview = node.latestReviews.nodes.find((review) => review.author?.login === viewerLogin);
+  return viewerReview?.commit?.oid !== node.headRefOid;
+}
+
+function toPrDetails(node: IGraphQlDetailsNode, viewerLogin: string): IPrDetails {
   const contexts = node.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
   // GitHub attaches one CheckRun per workflow run, so re-triggered workflows (e.g. pull_request_target
   // on edited) duplicate same-named checks on the same commit. Like the GitHub UI, keep only the
@@ -697,6 +715,7 @@ function toPrDetails(node: IGraphQlDetailsNode): IPrDetails {
     mergeMethods: toMergeMethods(node.repository),
     reviewDecision: node.reviewDecision,
     viewerDidAuthor: node.viewerDidAuthor,
+    canApprove: toCanApprove(node, viewerLogin),
     reviewers: toReviewers(node),
     checks,
     // Subtract the collapsed duplicates so the "N more checks" hint only counts nodes beyond the fetch cap.

@@ -205,6 +205,7 @@ describe("fetchPullRequests", () => {
 interface IDetailsNodeOverrides {
   mergeable?: string;
   state?: string;
+  headRefOid?: string;
   headRepository?: { nameWithOwner: string } | null;
   baseRef?: { compare: { behindBy: number } | null } | null;
   statusCheckRollup?: unknown;
@@ -233,6 +234,7 @@ function buildDetailsNode(overrides: IDetailsNodeOverrides = {}) {
     bodyHTML: "<p>Hello</p>",
     baseRefName: "main",
     headRefName: "feature/thing",
+    headRefOid: overrides.headRefOid ?? "head-oid",
     headRepository: overrides.headRepository ?? { nameWithOwner: "acme/repo" },
     baseRef: overrides.baseRef !== undefined ? overrides.baseRef : { compare: { behindBy: 0 } },
     changedFiles: 3,
@@ -291,7 +293,7 @@ describe("fetchPrDetails", () => {
   });
 
   it("should map the GraphQL node to PR details", async () => {
-    stubFetch({ data: { node: buildDetailsNode() } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode() } });
 
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
@@ -319,6 +321,7 @@ describe("fetchPrDetails", () => {
       mergeMethods: ["SQUASH", "MERGE"],
       reviewDecision: "REVIEW_REQUIRED",
       viewerDidAuthor: false,
+      canApprove: true,
       reviewers: [
         { name: "luigi", state: "APPROVED" },
         { name: "mario", state: "REQUESTED" },
@@ -353,7 +356,7 @@ describe("fetchPrDetails", () => {
   it("should sort the timeline chronologically across comments and reviews", async () => {
     stubFetch({
       data: {
-        node: buildDetailsNode({
+        viewer: { login: "jane" }, node: buildDetailsNode({
           comments: {
             totalCount: 1,
             nodes: [{ author: { login: "late" }, bodyHTML: "<p>after</p>", createdAt: "2026-07-05T00:00:00Z" }],
@@ -374,7 +377,7 @@ describe("fetchPrDetails", () => {
   it("should hide empty COMMENTED review shells but keep state-bearing reviews", async () => {
     stubFetch({
       data: {
-        node: buildDetailsNode({
+        viewer: { login: "jane" }, node: buildDetailsNode({
           reviews: {
             totalCount: 2,
             nodes: [
@@ -394,7 +397,7 @@ describe("fetchPrDetails", () => {
   it("should flag the timeline as truncated when older items exist", async () => {
     stubFetch({
       data: {
-        node: buildDetailsNode({ comments: { totalCount: 45, nodes: [{ author: { login: "mario" }, bodyHTML: "<p>x</p>", createdAt: "2026-07-02T00:00:00Z" }] } }),
+        viewer: { login: "jane" }, node: buildDetailsNode({ comments: { totalCount: 45, nodes: [{ author: { login: "mario" }, bodyHTML: "<p>x</p>", createdAt: "2026-07-02T00:00:00Z" }] } }),
       },
     });
 
@@ -406,7 +409,7 @@ describe("fetchPrDetails", () => {
   it("should map no allowed merge methods to an empty list", async () => {
     stubFetch({
       data: {
-        node: buildDetailsNode({
+        viewer: { login: "jane" }, node: buildDetailsNode({
           repository: { nameWithOwner: "acme/repo", mergeCommitAllowed: false, squashMergeAllowed: false, rebaseMergeAllowed: false },
         }),
       },
@@ -420,7 +423,7 @@ describe("fetchPrDetails", () => {
   it("should let a pending re-request win over the reviewer's previous review", async () => {
     stubFetch({
       data: {
-        node: buildDetailsNode({
+        viewer: { login: "jane" }, node: buildDetailsNode({
           reviewRequests: [{ requestedReviewer: { login: "luigi" } }],
           latestReviews: [{ author: { login: "luigi" }, state: "CHANGES_REQUESTED" }],
         }),
@@ -432,10 +435,78 @@ describe("fetchPrDetails", () => {
     expect(details.reviewers).toEqual([{ name: "luigi", state: "REQUESTED" }]);
   });
 
+  it("should block re-approval when the viewer's approval is still current", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "luigi" },
+        node: buildDetailsNode({
+          reviewRequests: [],
+          latestReviews: [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "head-oid" } }],
+          headRefOid: "head-oid",
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.canApprove).toBe(false);
+  });
+
+  it("should allow re-approval when a new commit landed since the viewer's approval", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "luigi" },
+        node: buildDetailsNode({
+          reviewRequests: [],
+          latestReviews: [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "old-oid" } }],
+          headRefOid: "new-oid",
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.canApprove).toBe(true);
+  });
+
+  it("should allow re-approval when the viewer was re-requested after approving", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "luigi" },
+        node: buildDetailsNode({
+          reviewRequests: [{ requestedReviewer: { login: "luigi" } }],
+          latestReviews: [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "head-oid" } }],
+          headRefOid: "head-oid",
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.canApprove).toBe(true);
+  });
+
+  it("should allow re-approval when the viewer's last review was dismissed", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "luigi" },
+        node: buildDetailsNode({
+          reviewRequests: [],
+          latestReviews: [{ author: { login: "luigi" }, state: "DISMISSED", commit: { oid: "head-oid" } }],
+          headRefOid: "head-oid",
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.canApprove).toBe(true);
+  });
+
   it("should map check URLs from detailsUrl and targetUrl", async () => {
     stubFetch({
       data: {
-        node: buildDetailsNode({
+        viewer: { login: "jane" }, node: buildDetailsNode({
           statusCheckRollup: {
             contexts: {
               totalCount: 2,
@@ -460,7 +531,7 @@ describe("fetchPrDetails", () => {
   it("should deduplicate same-named check runs keeping the latest run", async () => {
     stubFetch({
       data: {
-        node: buildDetailsNode({
+        viewer: { login: "jane" }, node: buildDetailsNode({
           statusCheckRollup: {
             contexts: {
               totalCount: 3,
@@ -485,7 +556,7 @@ describe("fetchPrDetails", () => {
   });
 
   it("should map a missing status check rollup to no checks", async () => {
-    stubFetch({ data: { node: buildDetailsNode({ statusCheckRollup: null }) } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode({ statusCheckRollup: null }) } });
 
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
@@ -494,10 +565,10 @@ describe("fetchPrDetails", () => {
   });
 
   it("should flag the PR as behind base only when the base has commits the head lacks", async () => {
-    stubFetch({ data: { node: buildDetailsNode({ baseRef: { compare: { behindBy: 3 } } }) } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode({ baseRef: { compare: { behindBy: 3 } } }) } });
     const behind = await fetchPrDetails("token", "PR_42", "feature/thing");
 
-    stubFetch({ data: { node: buildDetailsNode({ baseRef: { compare: { behindBy: 0 } } }) } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode({ baseRef: { compare: { behindBy: 0 } } }) } });
     const upToDate = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(behind.isBehindBase).toBe(true);
@@ -505,7 +576,7 @@ describe("fetchPrDetails", () => {
   });
 
   it("should never flag a cross-fork PR as behind, even when a same-named base-repo branch is behind", async () => {
-    stubFetch({ data: { node: buildDetailsNode({ headRepository: { nameWithOwner: "someone-else/repo" }, baseRef: { compare: { behindBy: 3 } } }) } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode({ headRepository: { nameWithOwner: "someone-else/repo" }, baseRef: { compare: { behindBy: 3 } } }) } });
 
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
@@ -513,7 +584,7 @@ describe("fetchPrDetails", () => {
   });
 
   it("should treat a missing comparison (fork head ref) as not behind", async () => {
-    stubFetch({ data: { node: buildDetailsNode({ baseRef: { compare: null } }) } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode({ baseRef: { compare: null } }) } });
 
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
@@ -521,7 +592,7 @@ describe("fetchPrDetails", () => {
   });
 
   it("should send the head ref name as a query variable", async () => {
-    stubFetch({ data: { node: buildDetailsNode() } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode() } });
 
     await fetchPrDetails("token", "PR_42", "feature/thing");
 
@@ -530,7 +601,7 @@ describe("fetchPrDetails", () => {
   });
 
   it("should fall back to the base repo when headRepository is missing", async () => {
-    stubFetch({ data: { node: buildDetailsNode({ headRepository: null }) } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode({ headRepository: null }) } });
 
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
@@ -538,7 +609,7 @@ describe("fetchPrDetails", () => {
   });
 
   it("should map an unexpected mergeable value to UNKNOWN", async () => {
-    stubFetch({ data: { node: buildDetailsNode({ mergeable: "WHATEVER" }) } });
+    stubFetch({ data: { viewer: { login: "jane" }, node: buildDetailsNode({ mergeable: "WHATEVER" }) } });
 
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 

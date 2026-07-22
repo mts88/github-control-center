@@ -537,9 +537,11 @@ function renderMergeBox(details: IPrDetails, defaultUpdateMethod: UpdateBranchMe
 
 function renderComposer(details: IPrDetails): string {
   const canReview = !details.viewerDidAuthor && details.state === "OPEN";
+  const approveDisabled = !details.canApprove;
+  const approveAttrs = approveDisabled ? ` disabled title="You already approved this Pull Request"` : "";
   const reviewButtons = canReview
     ? `<button id="request-changes" class="btn-danger">Request changes</button>
-       <button id="approve" class="btn-approve">Approve</button>`
+       <button id="approve" class="btn-approve"${approveAttrs}>Approve</button>`
     : "";
   return `
   <div class="composer">
