@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderPrDetailsHtml } from "./PrDetailsHtml";
+import type { IAnchoredFinding } from "../review/reviewFindings";
+import type { IReviewState } from "../review/reviewState";
 import type { IBriefState, IPrDetails } from "../core/types";
 
 const NONCE = "test-nonce-123";
@@ -624,6 +626,145 @@ describe("renderPrDetailsHtml", () => {
 
       expect(html).toContain("brief-error");
       expect(html).toContain("Claude CLI failed: run /login");
+    });
+  });
+
+  describe("AI review section", () => {
+    function renderWithReview(review: IReviewState, canPickReviewModel = false): string {
+      return renderPrDetailsHtml(buildDetails(), NONCE, NOW, undefined, "REBASE", undefined, review, canPickReviewModel);
+    }
+
+    const lineFinding: IAnchoredFinding = { subjectType: "LINE", path: "src/a.ts", side: "RIGHT", line: 12, severity: "issue", comment: "off by one" };
+    const fileFinding: IAnchoredFinding = { subjectType: "FILE", path: "src/b.ts", severity: "warning", comment: "consider splitting this file" };
+    const unanchorableFinding: IAnchoredFinding = { subjectType: "UNANCHORABLE", path: "made/up.ts", severity: "info", comment: "hallucinated path" };
+
+    it("should render neither button nor section when no review state is passed", () => {
+      const html = render();
+
+      expect(html).not.toContain('id="ai-review"');
+      expect(html).not.toContain('class="box review-section"');
+    });
+
+    it("should render the button but no section when idle", () => {
+      const html = renderWithReview({ status: "idle" });
+
+      expect(html).toContain('id="ai-review"');
+      expect(html).not.toContain('class="box review-section"');
+    });
+
+    it("should show a progress message and a disabled button while pending", () => {
+      const html = renderWithReview({ status: "pending" });
+
+      expect(html).toContain("Reviewing");
+      expect(html).toMatch(/id="ai-review"[^>]*disabled/);
+    });
+
+    it("should keep the button enabled after a completed review, unlike the brief", () => {
+      const html = renderWithReview({ status: "done", findings: [lineFinding], promotedIndices: [] });
+
+      expect(html).not.toMatch(/id="ai-review"[^>]*disabled/);
+    });
+
+    it("should render errors inside the section", () => {
+      const html = renderWithReview({ status: "error", text: "CLI timed out" });
+
+      expect(html).toContain("brief-error");
+      expect(html).toContain("CLI timed out");
+    });
+
+    it("should render each finding's severity, path, and escaped comment", () => {
+      const html = renderWithReview({ status: "done", findings: [lineFinding], promotedIndices: [] });
+
+      expect(html).toContain("Issue");
+      expect(html).toContain("src/a.ts");
+      expect(html).toContain("off by one");
+    });
+
+    it("should badge a LINE finding with its resolved line and side", () => {
+      const html = renderWithReview({ status: "done", findings: [lineFinding], promotedIndices: [] });
+
+      expect(html).toContain("L12");
+      expect(html).toContain("RIGHT");
+    });
+
+    it("should badge a FILE finding as file-level", () => {
+      const html = renderWithReview({ status: "done", findings: [fileFinding], promotedIndices: [] });
+
+      expect(html).toContain("file-level");
+    });
+
+    it("should offer a promote button with the finding's index for an anchorable finding", () => {
+      const html = renderWithReview({ status: "done", findings: [lineFinding, fileFinding], promotedIndices: [] });
+
+      expect(html).toContain('class="finding-promote" data-index="0"');
+      expect(html).toContain('class="finding-promote" data-index="1"');
+    });
+
+    it("should never offer a promote button for an unanchorable finding", () => {
+      const html = renderWithReview({ status: "done", findings: [unanchorableFinding], promotedIndices: [] });
+
+      expect(html).not.toContain('class="finding-promote"');
+      expect(html).toContain("not insertable");
+    });
+
+    it("should show an inserted marker instead of a button for a promoted finding", () => {
+      const html = renderWithReview({ status: "done", findings: [lineFinding, fileFinding], promotedIndices: [0] });
+
+      expect(html).not.toContain('data-index="0"');
+      expect(html).toContain('data-index="1"');
+      expect(html).toContain("Inserted");
+    });
+
+    it("should escape a hostile comment so model output stays inert", () => {
+      const html = renderWithReview({
+        status: "done",
+        findings: [{ ...lineFinding, comment: 'nice <script>alert("x")</script>' }],
+        promotedIndices: [],
+      });
+
+      expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+      expect(html).not.toContain('<script>alert("x")</script>');
+    });
+
+    it("should render a plain-text report when the model output could not be parsed as findings", () => {
+      const html = renderWithReview({ status: "done", reportText: "## Overview\n- looks fine" });
+
+      expect(html).toContain('<div class="brief-heading">Overview</div>');
+      expect(html).toContain("<li>looks fine</li>");
+    });
+
+    it("should keep a stale review visible with a warning banner and header tag", () => {
+      const html = renderWithReview({ status: "done", findings: [], promotedIndices: [], stale: true });
+
+      expect(html).toContain('<div class="brief-stale">');
+      expect(html).toContain('<span class="brief-stale-tag">outdated</span>');
+    });
+
+    it("should render the change-model link only when canPickReviewModel is true", () => {
+      const hidden = renderWithReview({ status: "idle" }, false);
+      const shown = renderWithReview({ status: "idle" }, true);
+
+      expect(hidden).not.toContain('id="ai-review-model"');
+      expect(shown).toContain('id="ai-review-model"');
+    });
+
+    it("should render no actions row when there is no brief or review state", () => {
+      const html = render();
+
+      expect(html).not.toContain('class="header-actions"');
+    });
+
+    it("should wire the promote button to post the finding's index", () => {
+      const html = renderWithReview({ status: "done", findings: [lineFinding], promotedIndices: [] });
+
+      expect(html).toContain('command: "promoteFinding"');
+    });
+
+    it("should wire the AI review button and model picker to their own commands", () => {
+      const html = renderWithReview({ status: "idle" }, true);
+
+      expect(html).toContain('command: "aiReview"');
+      expect(html).toContain('command: "aiReviewPickModel"');
     });
   });
 });

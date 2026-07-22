@@ -24,7 +24,8 @@ import { ReviewController, type IPatchKey } from "./review/ReviewController";
 import { detectAi as detectClaudeCli, runAiPrompt as runClaudeCli } from "./brief/ai";
 import { detectCodex, runCodexPrompt } from "./brief/codex";
 import { BriefStore, type PersistedBrief } from "./brief/briefState";
-import { DetailsSession } from "./panel/DetailsSession";
+import { ReviewStore } from "./review/reviewState";
+import { DetailsSession, type IReviewDraftInput } from "./panel/DetailsSession";
 import { toErrorMessage } from "./core/errors";
 import { toThreadPosition } from "./review/reviewThreads";
 import { applyFilters } from "./poll/filters";
@@ -318,22 +319,29 @@ export function activate(context: vscode.ExtensionContext): void {
   // results are pinned to the head oid — a push invalidates naturally. Hydrated from globalState
   // so a window reload keeps the briefs — local only (never setKeysForSync: PR content)
   const briefStore = new BriefStore(context.globalState.get<PersistedBrief[]>(BRIEF_CACHE_STATE_KEY, []));
+  // no persistence (unlike briefStore): findings are a working-session artifact, promoted ones
+  // already live on GitHub as pending comments
+  const reviewStore = new ReviewStore();
 
   function persistBriefs(): void {
     void context.globalState.update(BRIEF_CACHE_STATE_KEY, briefStore.serialize());
   }
 
-  function aiConfig(): { backend: string; claudeCommand: string; codexCommand: string; model: string; language: string } {
+  function aiConfig(): { backend: string; claudeCommand: string; codexCommand: string; model: string; reviewModel: string; language: string } {
     const config = ghccConfig();
     // model reaches `claude --model` on the (win32, shell:true) command line; keep it inside the
     // known enum so a stray value can never carry shell metacharacters into the spawn
     const rawModel = config.get<string>("ai.claude.model", "sonnet");
     const model = AI_MODELS.has(rawModel) ? rawModel : "sonnet";
+    // empty (the default) falls back to `model` at the call site — same enum, same spawn-safety reasoning
+    const rawReviewModel = config.get<string>("ai.claude.reviewModel", "");
+    const reviewModel = AI_MODELS.has(rawReviewModel) ? rawReviewModel : "";
     return {
       backend: config.get<string>("ai.backend", "claude-code"),
       claudeCommand: config.get<string>("ai.claude.command", "claude"),
       codexCommand: config.get<string>("ai.codex.command", "codex"),
       model,
+      reviewModel,
       language: config.get<string>("ai.language", "English"),
     };
   }
@@ -467,6 +475,7 @@ export function activate(context: vscode.ExtensionContext): void {
     ensurePatches,
     briefStore,
     persistBriefs,
+    reviewStore,
     aiConfig,
     detectAi: () => {
       const config = aiConfig();
@@ -484,6 +493,38 @@ export function activate(context: vscode.ExtensionContext): void {
         return runCodexPrompt(config.codexCommand, systemPrompt, prompt);
       }
       return runClaudeCli(config.claudeCommand, config.model, systemPrompt, prompt); // default: claude-code
+    },
+    runAiReview: (systemPrompt, prompt, modelOverride) => {
+      const config = aiConfig();
+      if (config.backend === "codex") {
+        return runCodexPrompt(config.codexCommand, systemPrompt, prompt); // codex has no model setting
+      }
+      // an explicit override (including "" for the CLI default) wins over the reviewModel/model fallback chain
+      const model = modelOverride !== undefined ? modelOverride : config.reviewModel || config.model;
+      return runClaudeCli(config.claudeCommand, model, systemPrompt, prompt); // default: claude-code
+    },
+    insertReviewDraft: async (pr, input: IReviewDraftInput) => {
+      const token = await requireToken();
+      await addReviewThread(token, { prId: pr.id, body: input.body, path: input.path, subjectType: input.subjectType, line: input.line, side: input.side });
+      // makes the draft discoverable by the existing submit flow and status bar, same as a native comment
+      reviewController.registerPr(pr);
+      await reviewController.reload(pr);
+    },
+    pickReviewModel: async () => {
+      const config = aiConfig();
+      if (config.backend !== "claude-code") {
+        return undefined; // no model concept outside claude-code — the webview hides the picker too
+      }
+      const picked = await vscode.window.showQuickPick(
+        [
+          { label: "Sonnet", value: "sonnet" },
+          { label: "Haiku", value: "haiku" },
+          { label: "Opus", value: "opus" },
+          { label: "CLI default", value: "" },
+        ],
+        { placeHolder: "Model for this AI review run" },
+      );
+      return picked?.value;
     },
     addPrComment,
     submitPrReview,
