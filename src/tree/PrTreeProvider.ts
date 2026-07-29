@@ -35,7 +35,7 @@ interface IMessageNode {
 
 export type TreeNode = IRepoNode | IPrNode | IFileNode | IFolderNode | IMessageNode;
 
-// APPROVED here is the "approved by a colleague" glyph — the viewer's own approval renders the plain check (see toReviewGlyph)
+// APPROVED here is the "approved by someone else" glyph — the viewer's own approval renders the plain check (see toReviewGlyph)
 const REVIEW_GLYPHS: Record<string, string> = {
   APPROVED: "☑",
   CHANGES_REQUESTED: "↻",

@@ -7,6 +7,22 @@
 
 A VSCode extension built by developers, for developers — to keep your GitHub situation under control: the PRs waiting for your review and your own open PRs, with a badge count on the activity bar, toast notifications, a GitHub-like PR page, full in-editor code review (diffs, line comments, pending reviews — no checkout needed), and one-click actions (review, merge, checkout) — all without leaving the editor.
 
+## Contents
+
+- [Features](#features)
+  - [Review icons](#review-icons)
+- [Authentication](#authentication)
+- [Settings](#settings)
+- [AI features](#ai-features)
+- [Reviewing pull requests](#reviewing-pull-requests)
+  - [Changed files](#changed-files)
+  - [Diffs](#diffs)
+  - [Comments](#comments)
+  - [Pending review](#pending-review)
+  - [Existing threads](#existing-threads)
+- [Muting repositories and organizations](#muting-repositories-and-organizations)
+- [Install](#install)
+
 ## Features
 
 - **Two views** in the activity bar container: **To Review** (PRs where your review is requested, including team requests) and **My PRs** (your open PRs), both grouped by repository. PRs you already reviewed stay in To Review after requested ones — labeled with your review state (approved, stale, changes requested, commented) — until they close or your review is re-requested.
@@ -27,7 +43,7 @@ Review state is encoded in small glyphs everywhere a PR appears:
 | Icon | Meaning |
 | ---- | ------- |
 | ✓ | Approved — on a tree row title, approved **by you** |
-| ☑ | Approved by a colleague (tree rows only) |
+| ☑ | Approved by someone else (tree rows only) |
 | ↻ | Changes requested |
 | 💬 | Commented |
 | ● | Review required / pending / dismissed |
