@@ -13,6 +13,8 @@ export interface IPullRequest {
   reviewDecision: string | null;
   /** the viewer's latest review state (APPROVED, DISMISSED, …) — null when never reviewed */
   viewerReviewState: string | null;
+  /** the viewer's APPROVED review predates the current head — poll-time copy of the details staleness rule */
+  isViewerApprovalStale?: boolean;
   /** set only on `IPrSnapshot.reviewed` entries: already reviewed, no active re-request */
   isReviewedByMe?: boolean;
   headRefName: string;

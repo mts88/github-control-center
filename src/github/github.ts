@@ -41,8 +41,8 @@ const PR_FIELDS = `
     headRefOid
     author { login }
     repository { nameWithOwner }
-    viewerLatestReview { state }
-    commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+    viewerLatestReview { state commit { oid } submittedAt }
+    commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
   }
 `;
 
@@ -73,8 +73,8 @@ interface IGraphQlPrNode {
   headRefOid: string;
   author: { login: string } | null;
   repository: { nameWithOwner: string };
-  viewerLatestReview: { state: string } | null;
-  commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }> };
+  viewerLatestReview: { state: string; commit: { oid: string } | null; submittedAt: string } | null;
+  commits: { nodes: Array<{ commit: { committedDate: string; statusCheckRollup: { state: string } | null } }> };
 }
 
 const DETAILS_QUERY = `
@@ -679,6 +679,11 @@ function toPullRequest(node: IGraphQlPrNode & { id: string }): IPullRequest {
     ciState: toCiState(node.commits.nodes[0]?.commit.statusCheckRollup?.state),
     reviewDecision: node.reviewDecision,
     viewerReviewState: node.viewerLatestReview?.state ?? null,
+    // ponytail: the head commit's committedDate stands in for the details query's max-over-30 —
+    // 30 commits × up to 300 PRs would blow the GraphQL node budget; rare divergence accepted
+    isViewerApprovalStale: node.viewerLatestReview
+      ? isStaleApproval(node.viewerLatestReview, node.headRefOid, node.commits.nodes[0]?.commit.committedDate ?? "")
+      : false,
     headRefName: node.headRefName,
     baseRefOid: node.baseRefOid,
     headRefOid: node.headRefOid,
@@ -807,11 +812,15 @@ function toTimeline(node: IGraphQlDetailsNode): IPrTimelineItem[] {
 }
 
 function toReviewers(node: IGraphQlDetailsNode): IPrReviewer[] {
+  const newestCommittedDate = node.historyCommits.nodes.reduce(
+    (newest, { commit }) => (commit.committedDate > newest ? commit.committedDate : newest),
+    "",
+  );
   const reviewByReviewer = new Map<string, { state: string; isStale: boolean }>();
   for (const review of node.latestReviews.nodes) {
     const login = review.author?.login;
     if (login) {
-      reviewByReviewer.set(login, { state: review.state, isStale: isStaleApproval(review, node) });
+      reviewByReviewer.set(login, { state: review.state, isStale: isStaleApproval(review, node.headRefOid, newestCommittedDate) });
     }
   }
   // a re-requested reviewer appears in both lists: the pending request wins
@@ -824,22 +833,24 @@ function toReviewers(node: IGraphQlDetailsNode): IPrReviewer[] {
   return [...reviewByReviewer.entries()].map(([name, review]) => ({ name, state: review.state, isStale: review.isStale }));
 }
 
-// the single staleness rule, shared by the reviewers sidebar and the Approve-button guard.
-// The oid comparison alone is not enough: after a force-push GitHub re-pins latestReviews.commit
-// to the new head, so an approval that predates the newest commit still reports the head oid —
-// committedDate survives the rewrite, submittedAt catches that case.
-function isStaleApproval(review: IGraphQlDetailsNode["latestReviews"]["nodes"][number], node: IGraphQlDetailsNode): boolean {
+interface IStaleCheckReview {
+  state: string;
+  commit: { oid: string } | null;
+  submittedAt: string;
+}
+
+// the single staleness rule, shared by the reviewers sidebar, the Approve-button guard and the
+// poll mapping. The oid comparison alone is not enough: after a force-push GitHub re-pins the
+// review's commit to the new head, so an approval that predates the newest commit still reports
+// the head oid — committedDate survives the rewrite, submittedAt catches that case.
+function isStaleApproval(review: IStaleCheckReview, headRefOid: string, newestCommittedDate: string): boolean {
   if (review.state !== "APPROVED") {
     return false;
   }
-  if (review.commit?.oid !== node.headRefOid) {
+  if (review.commit?.oid !== headRefOid) {
     return true;
   }
-  const newestCommitDate = node.historyCommits.nodes.reduce(
-    (newest, { commit }) => (commit.committedDate > newest ? commit.committedDate : newest),
-    "",
-  );
-  return newestCommitDate > review.submittedAt;
+  return newestCommittedDate > review.submittedAt;
 }
 
 function toCheck(checkNode: IGraphQlCheckNode): IPrCheck | undefined {

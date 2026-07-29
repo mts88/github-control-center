@@ -95,6 +95,7 @@ function buildDeps() {
     markPrReadyForReview: vi.fn().mockResolvedValue(undefined),
     updatePrBranch: vi.fn().mockResolvedValue(undefined),
     checkout: vi.fn().mockResolvedValue(undefined),
+    recordApproval: vi.fn(),
     refresh: vi.fn().mockResolvedValue(undefined),
     notify: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
     promptModal: vi.fn().mockResolvedValue(true),
@@ -291,6 +292,58 @@ describe("DetailsSession", () => {
 
       expect(deps.updatePrBranch).not.toHaveBeenCalled();
       expect(deps.panel.reenableActions).toHaveBeenCalled();
+    });
+  });
+
+  describe("handleMessage — approval overlay recording", () => {
+    it("records the approval with the PR's head oid after a successful APPROVE", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.recordApproval).toHaveBeenCalledWith(pr.id, pr.headRefOid);
+    });
+
+    it("does not record when requesting changes", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "REQUEST_CHANGES", text: "needs work" });
+      await flush();
+
+      expect(deps.recordApproval).not.toHaveBeenCalled();
+    });
+
+    it("does not record when the confirmation modal is declined", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.promptModal = vi.fn().mockResolvedValue(false);
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.recordApproval).not.toHaveBeenCalled();
+    });
+
+    it("does not record when the review mutation fails", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.submitPrReview = vi.fn().mockRejectedValue(new Error("boom"));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.recordApproval).not.toHaveBeenCalled();
     });
   });
 

@@ -29,10 +29,11 @@ interface IGraphQlNodeOverrides {
   rollupState?: string | null;
   isDraft?: boolean;
   reviewDecision?: string | null;
-  viewerLatestReview?: { state: string } | null;
+  viewerLatestReview?: { state: string; commit?: { oid: string } | null; submittedAt?: string } | null;
 }
 
 function buildNode(overrides: IGraphQlNodeOverrides = {}) {
+  const review = overrides.viewerLatestReview;
   return {
     id: overrides.id ?? "PR_1",
     number: 1,
@@ -46,9 +47,15 @@ function buildNode(overrides: IGraphQlNodeOverrides = {}) {
     headRefOid: "head-oid",
     author: overrides.author === undefined ? { login: "jane" } : overrides.author,
     repository: { nameWithOwner: "acme/repo" },
-    viewerLatestReview: overrides.viewerLatestReview ?? null,
+    viewerLatestReview: review
+      ? {
+          state: review.state,
+          commit: review.commit === undefined ? { oid: "head-oid" } : review.commit,
+          submittedAt: review.submittedAt ?? "2026-07-11T00:00:00Z",
+        }
+      : null,
     commits: {
-      nodes: [{ commit: { statusCheckRollup: overrides.rollupState ? { state: overrides.rollupState } : null } }],
+      nodes: [{ commit: { committedDate: "2026-07-10T00:00:00Z", statusCheckRollup: overrides.rollupState ? { state: overrides.rollupState } : null } }],
     },
   };
 }
@@ -92,6 +99,7 @@ describe("fetchPullRequests", () => {
         ciState: "SUCCESS",
         reviewDecision: "APPROVED",
         viewerReviewState: null,
+        isViewerApprovalStale: false,
         headRefName: "feature/thing",
         baseRefOid: "base-oid",
         headRefOid: "head-oid",
@@ -186,6 +194,48 @@ describe("fetchPullRequests", () => {
 
       expect(snapshot.toReview[0].isReviewedByMe).toBeUndefined();
       expect(snapshot.toReview[0].viewerReviewState).toBe("APPROVED");
+    });
+  });
+
+  describe("viewer approval staleness", () => {
+    it("should mark a fresh approval on the head commit as not stale", async () => {
+      stubGraphQlData([], [], [buildNode({ viewerLatestReview: { state: "APPROVED" } })]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.reviewed[0].isViewerApprovalStale).toBe(false);
+    });
+
+    it("should mark an approval pinned to a non-head commit as stale", async () => {
+      stubGraphQlData([], [], [buildNode({ viewerLatestReview: { state: "APPROVED", commit: { oid: "old-oid" } } })]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.reviewed[0].isViewerApprovalStale).toBe(true);
+    });
+
+    it("should mark an approval older than the newest commit as stale even on the head oid", async () => {
+      stubGraphQlData([], [], [buildNode({ viewerLatestReview: { state: "APPROVED", submittedAt: "2026-07-09T00:00:00Z" } })]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.reviewed[0].isViewerApprovalStale).toBe(true);
+    });
+
+    it("should never mark non-approved reviews as stale", async () => {
+      stubGraphQlData([], [], [buildNode({ viewerLatestReview: { state: "CHANGES_REQUESTED", commit: { oid: "old-oid" } } })]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.reviewed[0].isViewerApprovalStale).toBe(false);
+    });
+
+    it("should treat a missing viewer review as not stale", async () => {
+      stubGraphQlData([], [], [buildNode()]);
+
+      const snapshot = await fetchPullRequests("token");
+
+      expect(snapshot.reviewed[0].isViewerApprovalStale).toBe(false);
     });
   });
 

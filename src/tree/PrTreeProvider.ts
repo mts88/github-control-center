@@ -49,9 +49,13 @@ const VIEWER_REVIEW_LABELS: Record<string, string> = {
   COMMENTED: "💬 you commented",
 };
 
-function toViewerReviewLabel(viewerReviewState: string | null): string {
+function toViewerReviewLabel(pr: IPullRequest): string {
+  // an approval invalidated by newer commits reads as stale, never as a current approval
+  if (pr.viewerReviewState === "APPROVED" && pr.isViewerApprovalStale) {
+    return VIEWER_REVIEW_LABELS.DISMISSED;
+  }
   // total mapping: unknown states (e.g. PENDING) and null fall back to a generic label
-  return (viewerReviewState && VIEWER_REVIEW_LABELS[viewerReviewState]) || "reviewed";
+  return (pr.viewerReviewState && VIEWER_REVIEW_LABELS[pr.viewerReviewState]) || "reviewed";
 }
 
 const CI_ICONS: Record<CiState, vscode.ThemeIcon> = {
@@ -175,7 +179,9 @@ function toReviewGlyph(pr: IPullRequest): string | undefined {
   if (!pr.reviewDecision) {
     return undefined;
   }
-  const isApprovedByViewer = pr.reviewDecision === "APPROVED" && pr.viewerReviewState === "APPROVED";
+  // a stale viewer approval must not render the "current approval" check — it falls back to the generic ☑
+  const isApprovedByViewer =
+    pr.reviewDecision === "APPROVED" && pr.viewerReviewState === "APPROVED" && !pr.isViewerApprovalStale;
   if (isApprovedByViewer) {
     return "✓";
   }
@@ -188,7 +194,7 @@ function toPrTreeItem(pr: IPullRequest): vscode.TreeItem {
   const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
   // stable id: keeps the node's expansion state across the poll's full-tree refresh
   item.id = pr.id;
-  const viewerReviewLabel = pr.isReviewedByMe ? toViewerReviewLabel(pr.viewerReviewState) : undefined;
+  const viewerReviewLabel = pr.isReviewedByMe ? toViewerReviewLabel(pr) : undefined;
   item.description = `${pr.author} · ${formatAge(pr.createdAt)}${viewerReviewLabel ? ` · ${viewerReviewLabel}` : ""}`;
   item.iconPath = pr.isDraft ? new vscode.ThemeIcon("git-pull-request-draft") : CI_ICONS[pr.ciState];
   item.tooltip = `${pr.repo}\n${pr.title}\nby ${pr.author}${pr.isDraft ? " · draft" : ""}\nCI: ${pr.ciState}${pr.reviewDecision ? `\nReview: ${pr.reviewDecision}` : ""}${viewerReviewLabel ? `\nYour review: ${viewerReviewLabel}` : ""}`;

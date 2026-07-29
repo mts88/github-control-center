@@ -11,6 +11,7 @@ interface IPrOverrides {
   createdAt?: string;
   reviewDecision?: string | null;
   viewerReviewState?: string | null;
+  isViewerApprovalStale?: boolean;
   isReviewedByMe?: boolean;
 }
 
@@ -27,6 +28,7 @@ function buildPr(overrides: IPrOverrides = {}): IPullRequest {
     ciState: overrides.ciState ?? "NONE",
     reviewDecision: overrides.reviewDecision ?? null,
     viewerReviewState: overrides.viewerReviewState ?? null,
+    isViewerApprovalStale: overrides.isViewerApprovalStale ?? false,
     isReviewedByMe: overrides.isReviewedByMe,
     headRefName: "feature/thing",
     baseRefOid: "base-oid",
@@ -152,6 +154,14 @@ describe("PrTreeProvider", () => {
       expect(item.label).toBe("✓ A title");
     });
 
+    it("should fall back to the boxed check glyph when the viewer's approval is stale", () => {
+      const item = getPrTreeItem(
+        buildPr({ reviewDecision: "APPROVED", viewerReviewState: "APPROVED", isViewerApprovalStale: true })
+      );
+
+      expect(item.label).toBe("☑ A title");
+    });
+
     it("should use the boxed check glyph when the PR is approved by someone else", () => {
       const item = getPrTreeItem(buildPr({ reviewDecision: "APPROVED", viewerReviewState: "COMMENTED" }));
 
@@ -178,6 +188,13 @@ describe("PrTreeProvider", () => {
 
         expect(item.description).toContain(` · ${expectedSuffix}`);
         expect(item.tooltip).toContain(`Your review: ${expectedSuffix}`);
+      });
+
+      it("should describe a stale viewer approval as 'review stale', never as a current approval", () => {
+        const item = getPrTreeItem(buildPr({ isReviewedByMe: true, viewerReviewState: "APPROVED", isViewerApprovalStale: true }));
+
+        expect(item.description).toContain(" · ● review stale");
+        expect(item.description).not.toContain("you approved");
       });
 
       it("should not decorate rows without the reviewed tag even when a viewer review state exists", () => {

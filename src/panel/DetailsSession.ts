@@ -36,6 +36,8 @@ export interface IDetailsSessionDeps {
   markPrReadyForReview(token: string, prId: string): Promise<void>;
   updatePrBranch(token: string, prId: string, method: UpdateBranchMethod): Promise<void>;
   checkout(repo: string, headRefName: string): Promise<void>;
+  /** feeds the ApprovalOverlay so a fresh APPROVE renders in the Reviewed view before GitHub's search index catches up */
+  recordApproval(prId: string, headRefOid: string): void;
   refresh(): Promise<void>;
   notify: {
     info(message: string): void;
@@ -324,7 +326,12 @@ export class DetailsSession {
           this.deps.panel.reenableActions();
           return;
         }
-        await this.runPrMutation(pr, actionLabel, successMessage, (token) => this.deps.submitPrReview(token, pr.id, message.event, reviewText));
+        await this.runPrMutation(pr, actionLabel, successMessage, async (token) => {
+          await this.deps.submitPrReview(token, pr.id, message.event, reviewText);
+          if (message.event === "APPROVE") {
+            this.deps.recordApproval(pr.id, pr.headRefOid);
+          }
+        });
         return;
       }
       case "merge": {
