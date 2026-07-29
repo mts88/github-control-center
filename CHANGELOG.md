@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/mts88/github-control-center/compare/v1.9.0...v1.10.0) (2026-07-29)
+
+
+### Features
+
+* add copy and checkout actions next to the branch name in PR details header ([#26](https://github.com/mts88/github-control-center/issues/26)) ([de70ca9](https://github.com/mts88/github-control-center/commit/de70ca91bf1ee9302b6f40ab84a67025066213d1))
+
 # [1.9.0](https://github.com/mts88/github-control-center/compare/v1.8.1...v1.9.0) (2026-07-29)
 
 
