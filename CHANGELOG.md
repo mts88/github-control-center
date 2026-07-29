@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/mts88/github-control-center/compare/v1.10.0...v1.11.0) (2026-07-29)
+
+
+### Features
+
+* split fresh approvals into a reviewed sidebar view ([#25](https://github.com/mts88/github-control-center/issues/25)) ([5311fff](https://github.com/mts88/github-control-center/commit/5311fffc4b1db19c6907dfba5c66e5e23cabf6cb))
+
 # [1.10.0](https://github.com/mts88/github-control-center/compare/v1.9.0...v1.10.0) (2026-07-29)
 
 
