@@ -136,14 +136,26 @@ describe("PrTreeProvider", () => {
     });
 
     it.each([
-      ["APPROVED", "✓ A title"],
-      ["CHANGES_REQUESTED", "✗ A title"],
+      ["APPROVED", "☑ A title"],
+      ["CHANGES_REQUESTED", "↻ A title"],
       ["REVIEW_REQUIRED", "● A title"],
     ])("should prefix the label with the %s review glyph", (reviewDecision, expectedLabel) => {
       const item = getPrTreeItem(buildPr({ reviewDecision }));
 
       expect(item.label).toBe(expectedLabel);
       expect(item.tooltip).toContain(`Review: ${reviewDecision}`);
+    });
+
+    it("should use the plain check glyph when the viewer approved the PR", () => {
+      const item = getPrTreeItem(buildPr({ reviewDecision: "APPROVED", viewerReviewState: "APPROVED" }));
+
+      expect(item.label).toBe("✓ A title");
+    });
+
+    it("should use the boxed check glyph when the PR is approved by someone else", () => {
+      const item = getPrTreeItem(buildPr({ reviewDecision: "APPROVED", viewerReviewState: "COMMENTED" }));
+
+      expect(item.label).toBe("☑ A title");
     });
 
     it("should render a plain label without a review line when there is no review decision", () => {
@@ -155,10 +167,10 @@ describe("PrTreeProvider", () => {
 
     describe("reviewed rows", () => {
       it.each([
-        ["APPROVED", "you approved"],
-        ["DISMISSED", "review stale"],
-        ["CHANGES_REQUESTED", "you requested changes"],
-        ["COMMENTED", "you commented"],
+        ["APPROVED", "✓ you approved"],
+        ["DISMISSED", "● review stale"],
+        ["CHANGES_REQUESTED", "↻ you requested changes"],
+        ["COMMENTED", "💬 you commented"],
         ["PENDING", "reviewed"],
         [null, "reviewed"],
       ])("should describe a reviewed row with viewer state %s as '%s'", (viewerReviewState, expectedSuffix) => {

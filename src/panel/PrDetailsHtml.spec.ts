@@ -172,6 +172,98 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain("approved these changes 5 days ago");
     });
 
+    it("should prefix entries with a review-state icon", () => {
+      const html = render();
+
+      expect(html).toContain('<span class="review-icon">💬</span> <span class="author">mario</span>');
+      expect(html).toContain('<span class="review-icon APPROVED">✓</span> <span class="author">luigi</span>');
+    });
+
+    it("should use the circular-arrow icon for requested changes", () => {
+      const html = render({
+        timeline: [{ kind: "review", author: "luigi", avatarUrl: "", bodyHtml: "", createdAt: "2026-07-03T00:00:00Z", reviewState: "CHANGES_REQUESTED" }],
+      });
+
+      expect(html).toContain('<span class="review-icon CHANGES_REQUESTED">↻</span>');
+    });
+
+    it("should group consecutive commits under a single avatar", () => {
+      const html = render({
+        timeline: [
+          { kind: "commit", author: "mario", avatarUrl: "https://avatars.example/mario", bodyHtml: "", createdAt: "2026-07-02T00:00:00Z", commitMessage: "fix: one", commitSha: "abc1234", commitUrl: "https://github.com/acme/repo/commit/abc1234" },
+          { kind: "commit", author: "mario", avatarUrl: "https://avatars.example/mario", bodyHtml: "", createdAt: "2026-07-02T01:00:00Z", commitMessage: "feat: two", commitSha: "def5678", commitUrl: "https://github.com/acme/repo/commit/def5678" },
+        ],
+      });
+
+      expect(html.match(/class="commit-group"/g)).toHaveLength(1);
+      expect(html).toContain("added 2 commits");
+      expect(html).toContain(">fix: one</span>");
+      expect(html).toContain('<a class="commit-sha" href="https://github.com/acme/repo/commit/abc1234">abc1234</a>');
+      expect(html).toContain(">feat: two</span>");
+    });
+
+    it("should split commit groups around other timeline items", () => {
+      const commit = (sha: string, createdAt: string) => ({
+        kind: "commit" as const,
+        author: "mario",
+        avatarUrl: "",
+        bodyHtml: "",
+        createdAt,
+        commitMessage: "fix: one",
+        commitSha: sha,
+        commitUrl: `https://github.com/acme/repo/commit/${sha}`,
+      });
+      const html = render({
+        timeline: [
+          commit("abc1234", "2026-07-02T00:00:00Z"),
+          { kind: "comment", author: "luigi", avatarUrl: "", bodyHtml: "<p>Hi</p>", createdAt: "2026-07-02T01:00:00Z" },
+          commit("def5678", "2026-07-02T02:00:00Z"),
+        ],
+      });
+
+      expect(html.match(/class="commit-group"/g)).toHaveLength(2);
+      expect(html.match(/added a commit/g)).toHaveLength(2);
+    });
+
+    it("should split commit groups when the author changes so each run keeps its own attribution", () => {
+      const commit = (author: string, sha: string, createdAt: string) => ({
+        kind: "commit" as const,
+        author,
+        avatarUrl: "",
+        bodyHtml: "",
+        createdAt,
+        commitMessage: "fix: one",
+        commitSha: sha,
+        commitUrl: `https://github.com/acme/repo/commit/${sha}`,
+      });
+      const html = render({
+        timeline: [
+          commit("mario", "aaa1111", "2026-07-02T00:00:00Z"),
+          commit("mario", "bbb2222", "2026-07-02T01:00:00Z"),
+          commit("mario", "ccc3333", "2026-07-02T02:00:00Z"),
+          commit("luigi", "ddd4444", "2026-07-02T03:00:00Z"),
+          commit("mario", "eee5555", "2026-07-02T04:00:00Z"),
+        ],
+      });
+
+      expect(html.match(/class="commit-group"/g)).toHaveLength(3);
+      const groupHeaders = [...html.matchAll(/<span class="author">(\w+)<\/span> (added (?:a commit|\d+ commits))/g)].map(
+        (headerMatch) => `${headerMatch[1]} ${headerMatch[2]}`,
+      );
+      expect(groupHeaders).toEqual(["mario added 3 commits", "luigi added a commit", "mario added a commit"]);
+    });
+
+    it("should escape commit messages", () => {
+      const html = render({
+        timeline: [
+          { kind: "commit", author: "mario", avatarUrl: "", bodyHtml: "", createdAt: "2026-07-02T00:00:00Z", commitMessage: "fix: <script>alert(1)</script>", commitSha: "abc1234", commitUrl: "" },
+        ],
+      });
+
+      expect(html).not.toContain("<script>alert(1)</script>");
+      expect(html).toContain("fix: &lt;script&gt;");
+    });
+
     it("should link review code comments to the files tab", () => {
       const html = render();
 
@@ -439,6 +531,23 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain(">+10</span>");
       expect(html).toContain(">−4</span>");
       expect(html).not.toContain("src/index.ts");
+    });
+
+    it.each([
+      ["APPROVED", "✓ approved"],
+      ["CHANGES_REQUESTED", "↻ changes requested"],
+      ["COMMENTED", "💬 commented"],
+      ["REQUESTED", "● requested"],
+    ])("should show the %s reviewer with its state icon", (state, expectedState) => {
+      const html = render({ reviewers: [{ name: "luigi", state }] });
+
+      expect(html).toContain(`<span class="reviewer-state ${state}">${expectedState}</span>`);
+    });
+
+    it("should flag a stale approval with the stale suffix and class", () => {
+      const html = render({ reviewers: [{ name: "luigi", state: "APPROVED", isStale: true }] });
+
+      expect(html).toContain('<span class="reviewer-state APPROVED stale">✓ approved · stale</span>');
     });
 
     it("should color label pills with the GitHub label color", () => {

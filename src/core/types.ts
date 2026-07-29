@@ -84,6 +84,8 @@ export type PrState = "OPEN" | "CLOSED" | "MERGED";
 export interface IPrReviewer {
   name: string;
   state: string;
+  /** APPROVED review produced on an older commit than the current head */
+  isStale?: boolean;
 }
 
 export interface IPrCheck {
@@ -98,13 +100,17 @@ export interface IPrLabel {
 }
 
 export interface IPrTimelineItem {
-  kind: "comment" | "review";
+  kind: "comment" | "review" | "commit";
   author: string;
   avatarUrl: string;
   bodyHtml: string;
   createdAt: string;
   reviewState?: string;
   codeCommentsCount?: number;
+  /** plain text, never HTML — commits render through escapeHtml, not the bodyHtml path */
+  commitMessage?: string;
+  commitSha?: string;
+  commitUrl?: string;
 }
 
 export interface IBriefState {

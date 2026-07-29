@@ -7,18 +7,48 @@
 
 A VSCode extension built by developers, for developers — to keep your GitHub situation under control: the PRs waiting for your review and your own open PRs, with a badge count on the activity bar, toast notifications, a GitHub-like PR page, full in-editor code review (diffs, line comments, pending reviews — no checkout needed), and one-click actions (review, merge, checkout) — all without leaving the editor.
 
+## Contents
+
+- [Features](#features)
+  - [Review icons](#review-icons)
+- [Authentication](#authentication)
+- [Settings](#settings)
+- [AI features](#ai-features)
+- [Reviewing pull requests](#reviewing-pull-requests)
+  - [Changed files](#changed-files)
+  - [Diffs](#diffs)
+  - [Comments](#comments)
+  - [Pending review](#pending-review)
+  - [Existing threads](#existing-threads)
+- [Muting repositories and organizations](#muting-repositories-and-organizations)
+- [Install](#install)
+
 ## Features
 
 - **Two views** in the activity bar container: **To Review** (PRs where your review is requested, including team requests) and **My PRs** (your open PRs), both grouped by repository. PRs you already reviewed stay in To Review after requested ones — labeled with your review state (approved, stale, changes requested, commented) — until they close or your review is re-requested.
 - **Badge count** on the activity bar icon, configurable per list.
 - **Toast notifications** when a new PR requests your review — and when one of your own PRs gets approved or receives a changes request — with quick actions (Open, Settings). Anti-spam by design: the first fetch after a reload never fires a storm.
-- **PR details panel**: click a PR to open a GitHub-like page — conversation timeline with rendered mermaid diagrams, merge box (review decision, checks, conflicts, out-of-date branch), reviewers, labels, aggregate diffstat — without leaving VSCode.
+- **PR details panel**: click a PR to open a GitHub-like page — conversation timeline with commits (grouped compactly) and rendered mermaid diagrams, merge box (review decision, checks, conflicts, out-of-date branch), reviewers with stale-approval flagging, labels, aggregate diffstat — without leaving VSCode.
 - **Act on PRs**: comment, approve, request changes, merge (with the repo-allowed merge methods), mark your own drafts as ready for review, update an out-of-date branch (rebase or merge commit, GitHub-style selector), and check out the PR branch when the repository is open in the workspace. CI check names link straight to their runs.
 - **Code review in the editor**: expand a PR row to browse its changed files (directory tree or flat list), open real diffs pinned to the PR's commits — no checkout needed, fork PRs included — and review like on GitHub: comments on a line, a selection, or the whole file, batched into a pending review you submit as Comment / Approve / Request changes. Existing review threads show inline with reply and resolve; per-file viewed checkboxes sync with GitHub.
 - **Row shortcuts**: inline icons to check out the PR branch or open it in the browser; right-click to copy the URL or branch name, or mute the repository or its whole organization.
 - **Muting with search**: the "Manage Muted Repositories" command opens a picker that live-searches GitHub as you type — mute/unmute repositories or entire organizations in one click.
 - **AI brief** (optional, requires the [Claude Code](https://claude.com/product/claude-code) CLI): a **✨ Brief me** button in the PR details panel produces a reviewer-oriented summary grounded in the diff — what changed, risk areas, suggested reading order. See [AI features](#ai-features).
 - **Zero runtime dependencies**: native `fetch`, VSCode's built-in GitHub authentication, GitHub-rendered markdown (`bodyHTML`). Mermaid diagrams are rendered by a locally bundled copy of mermaid — no CDN, nothing leaves your machine.
+
+### Review icons
+
+Review state is encoded in small glyphs everywhere a PR appears:
+
+| Icon | Meaning |
+| ---- | ------- |
+| ✓ | Approved — on a tree row title, approved **by you** |
+| ☑ | Approved by someone else (tree rows only) |
+| ↻ | Changes requested |
+| 💬 | Commented |
+| ● | Review required / pending / dismissed |
+
+In the details panel the icons are colored (green / red / yellow), and a **stale approval** — one submitted before the newest commit, force-pushes included — shows as `✓ approved · stale` in yellow in the reviewers sidebar. The icon at the start of each tree row is the CI status (pass, fail, spinner while running; draft PRs show the draft icon), independent of the review glyphs in the title.
 
 ## Authentication
 

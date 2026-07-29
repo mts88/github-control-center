@@ -107,7 +107,7 @@ const DETAILS_QUERY = `
           nodes { requestedReviewer { ... on User { login } ... on Team { name } } }
         }
         latestReviews(first: 30) {
-          nodes { author { login } state commit { oid } }
+          nodes { author { login } state commit { oid } submittedAt }
         }
         comments(last: 30) {
           totalCount
@@ -116,6 +116,18 @@ const DETAILS_QUERY = `
         reviews(last: 30) {
           totalCount
           nodes { author { login avatarUrl } state bodyHTML createdAt comments { totalCount } }
+        }
+        historyCommits: commits(last: 30) {
+          totalCount
+          nodes {
+            commit {
+              abbreviatedOid
+              messageHeadline
+              committedDate
+              url
+              author { name avatarUrl user { login } }
+            }
+          }
         }
         commits(last: 1) {
           totalCount
@@ -213,7 +225,19 @@ interface IGraphQlDetailsNode {
   reviewDecision: string | null;
   viewerDidAuthor: boolean;
   reviewRequests: { nodes: Array<{ requestedReviewer: { login?: string; name?: string } | null }> };
-  latestReviews: { nodes: Array<{ author: { login: string } | null; state: string; commit: { oid: string } | null }> };
+  latestReviews: { nodes: Array<{ author: { login: string } | null; state: string; commit: { oid: string } | null; submittedAt: string }> };
+  historyCommits: {
+    totalCount: number;
+    nodes: Array<{
+      commit: {
+        abbreviatedOid: string;
+        messageHeadline: string;
+        committedDate: string;
+        url: string;
+        author: { name: string | null; avatarUrl: string; user: { login: string } | null } | null;
+      };
+    }>;
+  };
   comments: {
     totalCount: number;
     nodes: Array<{ author: IGraphQlActor | null; bodyHTML: string; createdAt: string }>;
@@ -669,12 +693,11 @@ function toCanApprove(node: IGraphQlDetailsNode, viewerLogin: string): boolean {
   // ponytail: re-request detection only covers individual reviewRequests entries (toReviewers'
   // REQUESTED override) — a re-request routed through the viewer's team instead of them by name
   // won't be picked up here; team-membership resolution would need extra API calls.
-  const effectiveState = toReviewers(node).find((reviewer) => reviewer.name === viewerLogin)?.state ?? null;
-  if (effectiveState !== "APPROVED") {
+  const viewerAsReviewer = toReviewers(node).find((reviewer) => reviewer.name === viewerLogin);
+  if (viewerAsReviewer?.state !== "APPROVED") {
     return true;
   }
-  const viewerReview = node.latestReviews.nodes.find((review) => review.author?.login === viewerLogin);
-  return viewerReview?.commit?.oid !== node.headRefOid;
+  return viewerAsReviewer.isStale === true;
 }
 
 function toPrDetails(node: IGraphQlDetailsNode, viewerLogin: string): IPrDetails {
@@ -721,7 +744,10 @@ function toPrDetails(node: IGraphQlDetailsNode, viewerLogin: string): IPrDetails
     // Subtract the collapsed duplicates so the "N more checks" hint only counts nodes beyond the fetch cap.
     checksTotal: (contexts?.totalCount ?? 0) - (rawChecks.length - checks.length),
     timeline: toTimeline(node),
-    timelineTruncated: node.comments.totalCount > node.comments.nodes.length || node.reviews.totalCount > node.reviews.nodes.length,
+    timelineTruncated:
+      node.comments.totalCount > node.comments.nodes.length ||
+      node.reviews.totalCount > node.reviews.nodes.length ||
+      node.historyCommits.totalCount > node.historyCommits.nodes.length,
   };
 }
 
@@ -767,25 +793,53 @@ function toTimeline(node: IGraphQlDetailsNode): IPrTimelineItem[] {
       reviewState: review.state,
       codeCommentsCount: review.comments.totalCount,
     }));
-  return [...comments, ...reviews].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+  const commits: IPrTimelineItem[] = node.historyCommits.nodes.map(({ commit }) => ({
+    kind: "commit",
+    author: commit.author?.user?.login ?? commit.author?.name ?? "unknown",
+    avatarUrl: commit.author?.avatarUrl ?? "",
+    bodyHtml: "",
+    createdAt: commit.committedDate,
+    commitMessage: commit.messageHeadline,
+    commitSha: commit.abbreviatedOid,
+    commitUrl: commit.url,
+  }));
+  return [...comments, ...reviews, ...commits].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
 }
 
 function toReviewers(node: IGraphQlDetailsNode): IPrReviewer[] {
-  const stateByReviewer = new Map<string, string>();
+  const reviewByReviewer = new Map<string, { state: string; isStale: boolean }>();
   for (const review of node.latestReviews.nodes) {
     const login = review.author?.login;
     if (login) {
-      stateByReviewer.set(login, review.state);
+      reviewByReviewer.set(login, { state: review.state, isStale: isStaleApproval(review, node) });
     }
   }
   // a re-requested reviewer appears in both lists: the pending request wins
   for (const request of node.reviewRequests.nodes) {
     const name = request.requestedReviewer?.login ?? request.requestedReviewer?.name;
     if (name) {
-      stateByReviewer.set(name, "REQUESTED");
+      reviewByReviewer.set(name, { state: "REQUESTED", isStale: false });
     }
   }
-  return [...stateByReviewer.entries()].map(([name, state]) => ({ name, state }));
+  return [...reviewByReviewer.entries()].map(([name, review]) => ({ name, state: review.state, isStale: review.isStale }));
+}
+
+// the single staleness rule, shared by the reviewers sidebar and the Approve-button guard.
+// The oid comparison alone is not enough: after a force-push GitHub re-pins latestReviews.commit
+// to the new head, so an approval that predates the newest commit still reports the head oid —
+// committedDate survives the rewrite, submittedAt catches that case.
+function isStaleApproval(review: IGraphQlDetailsNode["latestReviews"]["nodes"][number], node: IGraphQlDetailsNode): boolean {
+  if (review.state !== "APPROVED") {
+    return false;
+  }
+  if (review.commit?.oid !== node.headRefOid) {
+    return true;
+  }
+  const newestCommitDate = node.historyCommits.nodes.reduce(
+    (newest, { commit }) => (commit.committedDate > newest ? commit.committedDate : newest),
+    "",
+  );
+  return newestCommitDate > review.submittedAt;
 }
 
 function toCheck(checkNode: IGraphQlCheckNode): IPrCheck | undefined {

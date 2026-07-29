@@ -35,17 +35,18 @@ interface IMessageNode {
 
 export type TreeNode = IRepoNode | IPrNode | IFileNode | IFolderNode | IMessageNode;
 
+// APPROVED here is the "approved by someone else" glyph — the viewer's own approval renders the plain check (see toReviewGlyph)
 const REVIEW_GLYPHS: Record<string, string> = {
-  APPROVED: "✓",
-  CHANGES_REQUESTED: "✗",
+  APPROVED: "☑",
+  CHANGES_REQUESTED: "↻",
   REVIEW_REQUIRED: "●",
 };
 
 const VIEWER_REVIEW_LABELS: Record<string, string> = {
-  APPROVED: "you approved",
-  DISMISSED: "review stale",
-  CHANGES_REQUESTED: "you requested changes",
-  COMMENTED: "you commented",
+  APPROVED: "✓ you approved",
+  DISMISSED: "● review stale",
+  CHANGES_REQUESTED: "↻ you requested changes",
+  COMMENTED: "💬 you commented",
 };
 
 function toViewerReviewLabel(viewerReviewState: string | null): string {
@@ -170,8 +171,19 @@ function groupByRepo(prs: IPullRequest[]): IRepoNode[] {
     .map(([repo, repoPrs]) => ({ kind: "repo" as const, label: repo, prs: repoPrs }));
 }
 
+function toReviewGlyph(pr: IPullRequest): string | undefined {
+  if (!pr.reviewDecision) {
+    return undefined;
+  }
+  const isApprovedByViewer = pr.reviewDecision === "APPROVED" && pr.viewerReviewState === "APPROVED";
+  if (isApprovedByViewer) {
+    return "✓";
+  }
+  return REVIEW_GLYPHS[pr.reviewDecision];
+}
+
 function toPrTreeItem(pr: IPullRequest): vscode.TreeItem {
-  const reviewGlyph = pr.reviewDecision ? REVIEW_GLYPHS[pr.reviewDecision] : undefined;
+  const reviewGlyph = toReviewGlyph(pr);
   const label = reviewGlyph ? `${reviewGlyph} ${pr.title}` : pr.title;
   const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
   // stable id: keeps the node's expansion state across the poll's full-tree refresh
