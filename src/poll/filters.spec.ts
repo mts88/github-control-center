@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { applyFilters } from "./filters";
+import { applyFilters, partitionReviewed } from "./filters";
 import type { IPrSnapshot, IPullRequest } from "../core/types";
 
 interface IPrOverrides {
   id?: string;
   repo?: string;
   isDraft?: boolean;
+  viewerReviewState?: string | null;
+  isViewerApprovalStale?: boolean;
 }
 
 function buildPr(overrides: IPrOverrides = {}): IPullRequest {
@@ -20,7 +22,8 @@ function buildPr(overrides: IPrOverrides = {}): IPullRequest {
     createdAt: "2026-07-01T00:00:00Z",
     ciState: "NONE",
     reviewDecision: null,
-    viewerReviewState: null,
+    viewerReviewState: overrides.viewerReviewState ?? null,
+    isViewerApprovalStale: overrides.isViewerApprovalStale ?? false,
     headRefName: "feature/thing",
     baseRefOid: "base-oid",
     headRefOid: "head-oid",
@@ -74,5 +77,34 @@ describe("applyFilters", () => {
 
     expect(filtered.reviewed).toEqual([]);
     expect(filtered.toReview).toHaveLength(1);
+  });
+});
+
+describe("partitionReviewed", () => {
+  it("should route fresh approvals to freshlyApproved", () => {
+    const fresh = buildPr({ id: "FRESH", viewerReviewState: "APPROVED" });
+
+    expect(partitionReviewed([fresh])).toEqual({ freshlyApproved: [fresh], needsAttention: [] });
+  });
+
+  it.each([
+    ["a stale approval", buildPr({ id: "STALE", viewerReviewState: "APPROVED", isViewerApprovalStale: true })],
+    ["a comment review", buildPr({ id: "COMMENTED", viewerReviewState: "COMMENTED" })],
+    ["a changes request", buildPr({ id: "CHANGES", viewerReviewState: "CHANGES_REQUESTED" })],
+    ["a dismissed review", buildPr({ id: "DISMISSED", viewerReviewState: "DISMISSED" })],
+    ["a missing review state", buildPr({ id: "NONE", viewerReviewState: null })],
+  ])("should route %s to needsAttention", (_label, pr) => {
+    expect(partitionReviewed([pr])).toEqual({ freshlyApproved: [], needsAttention: [pr] });
+  });
+
+  it("should preserve order inside each partition", () => {
+    const firstFresh = buildPr({ id: "F1", viewerReviewState: "APPROVED" });
+    const commented = buildPr({ id: "C1", viewerReviewState: "COMMENTED" });
+    const secondFresh = buildPr({ id: "F2", viewerReviewState: "APPROVED" });
+
+    const partition = partitionReviewed([firstFresh, commented, secondFresh]);
+
+    expect(partition.freshlyApproved.map((pr) => pr.id)).toEqual(["F1", "F2"]);
+    expect(partition.needsAttention.map((pr) => pr.id)).toEqual(["C1"]);
   });
 });

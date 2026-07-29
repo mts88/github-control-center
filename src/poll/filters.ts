@@ -7,6 +7,22 @@ export interface IFilterOptions {
   hideReviewed: boolean;
 }
 
+export interface IReviewedPartition {
+  /** APPROVED and still current — the "Reviewed" view */
+  freshlyApproved: IPullRequest[];
+  /** commented, changes requested, dismissed or stale approvals — stay in "To Review" */
+  needsAttention: IPullRequest[];
+}
+
+/** Splits the reviewed section between the "Reviewed" view and the tail of "To Review". */
+export function partitionReviewed(reviewed: IPullRequest[]): IReviewedPartition {
+  const isFreshApproval = (pr: IPullRequest): boolean => pr.viewerReviewState === "APPROVED" && !pr.isViewerApprovalStale;
+  return {
+    freshlyApproved: reviewed.filter(isFreshApproval),
+    needsAttention: reviewed.filter((pr) => !isFreshApproval(pr)),
+  };
+}
+
 /** Runs before providers, badge and trackers: lists, badge and toasts must always agree. */
 export function applyFilters(snapshot: IPrSnapshot, options: IFilterOptions): IPrSnapshot {
   const isUnmuted = (pr: IPullRequest): boolean => !isRepoMuted(pr.repo, options.mutedRepos);

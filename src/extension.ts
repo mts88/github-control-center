@@ -26,7 +26,8 @@ import { BriefStore, type PersistedBrief } from "./brief/briefState";
 import { DetailsSession } from "./panel/DetailsSession";
 import { toErrorMessage } from "./core/errors";
 import { toThreadPosition } from "./review/reviewThreads";
-import { applyFilters } from "./poll/filters";
+import { ApprovalOverlay } from "./poll/ApprovalOverlay";
+import { applyFilters, partitionReviewed } from "./poll/filters";
 import { NewPrTracker } from "./poll/NewPrTracker";
 import { AsyncOidCache } from "./core/OidCache";
 import { PrContentProvider, fromPrUri, toPrUri } from "./review/PrContentProvider";
@@ -144,6 +145,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     try {
       await submitPendingReview(await requireToken(), pr.id, event, body.trim());
+      if (event === "APPROVE") {
+        approvalOverlay.record(pr.id, pr.headRefOid);
+      }
       void vscode.window.showInformationMessage(`Review submitted on ${pr.repo}#${pr.number}`);
       await reviewController.reload(pr);
       void refresh();
@@ -284,8 +288,10 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   const toReviewProvider = new PrTreeProvider(loadPrFiles, getFilesLayout);
+  const reviewedProvider = new PrTreeProvider(loadPrFiles, getFilesLayout);
   const mineProvider = new PrTreeProvider(loadPrFiles, getFilesLayout);
   const toReviewView = vscode.window.createTreeView("githubControlCenter.toReview", { treeDataProvider: toReviewProvider });
+  const reviewedView = vscode.window.createTreeView("githubControlCenter.reviewed", { treeDataProvider: reviewedProvider });
   const mineView = vscode.window.createTreeView("githubControlCenter.mine", { treeDataProvider: mineProvider });
 
   function handleCheckboxChange(event: vscode.TreeCheckboxChangeEvent<TreeNode>): void {
@@ -303,6 +309,7 @@ export function activate(context: vscode.ExtensionContext): void {
         } catch (error) {
           node.file.viewedState = previousState;
           toReviewProvider.refresh();
+          reviewedProvider.refresh();
           mineProvider.refresh();
           void vscode.window.showErrorMessage(`Updating the viewed state failed: ${toErrorMessage(error)}`);
         }
@@ -311,6 +318,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   const newPrTracker = new NewPrTracker();
   const reviewDecisionTracker = new ReviewDecisionTracker();
+  const approvalOverlay = new ApprovalOverlay();
   const detailsPanel = new PrDetailsPanel(context.extensionUri);
   // repos seen in the last raw snapshot (pre-filter, so muted ones stay unmutable from the picker)
   let knownRepos = new Set<string>();
@@ -474,6 +482,7 @@ export function activate(context: vscode.ExtensionContext): void {
     markPrReadyForReview,
     updatePrBranch,
     checkout: checkoutBranch,
+    recordApproval: (prId, headRefOid) => approvalOverlay.record(prId, headRefOid),
     refresh,
     notify: {
       info: (message) => void vscode.window.showInformationMessage(message),
@@ -531,12 +540,15 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.commands.executeCommand("setContext", "githubControlCenter.signedIn", Boolean(session));
     if (!session) {
       toReviewProvider.clear();
+      reviewedProvider.clear();
       mineProvider.clear();
       toReviewView.badge = undefined;
       return;
     }
     try {
-      const snapshot = await fetchPullRequests(session.accessToken);
+      // the overlay rewrites the raw snapshot, so panel re-pointing, filters, providers, badge
+      // and trackers all see the same optimistic world until GitHub's search index catches up
+      const snapshot = approvalOverlay.apply(await fetchPullRequests(session.accessToken));
       const allPrs = [...snapshot.toReview, ...snapshot.mine, ...snapshot.reviewed];
       knownRepos = new Set(allPrs.map((pr) => pr.repo));
       // re-points the open-panel PR at the fresh snapshot entry (raw, pre-filter) before silently
@@ -550,13 +562,17 @@ export function activate(context: vscode.ExtensionContext): void {
         hideDrafts: config.get("toReview.hideDrafts", false),
         hideReviewed: config.get("toReview.hideReviewed", false),
       });
-      // requested rows first, already-reviewed rows after — within each repo group too
-      toReviewProvider.setPrs([...visibleSnapshot.toReview, ...visibleSnapshot.reviewed]);
+      // fresh approvals live in the Reviewed view; requested rows first in To Review, rows still
+      // needing attention (commented, changes requested, stale approvals) after — per repo group too
+      const { freshlyApproved, needsAttention } = partitionReviewed(visibleSnapshot.reviewed);
+      toReviewProvider.setPrs([...visibleSnapshot.toReview, ...needsAttention]);
+      reviewedProvider.setPrs(freshlyApproved);
       mineProvider.setPrs(visibleSnapshot.mine);
+      // each count mirrors its view's contents exactly: badge and views must always agree
       const badgeCount =
-        (config.get("badge.countToReview", true) ? visibleSnapshot.toReview.length : 0) +
+        (config.get("badge.countToReview", true) ? visibleSnapshot.toReview.length + needsAttention.length : 0) +
         (config.get("badge.countMine", false) ? visibleSnapshot.mine.length : 0) +
-        (config.get("badge.countReviewed", false) ? visibleSnapshot.reviewed.length : 0);
+        (config.get("badge.countReviewed", false) ? freshlyApproved.length : 0);
       toReviewView.badge = badgeCount
         ? { value: badgeCount, tooltip: `${badgeCount} pull requests` }
         : undefined;
@@ -594,6 +610,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     toReviewView,
+    reviewedView,
     mineView,
     output,
     { dispose: () => clearTimeout(pollTimer) },
@@ -670,6 +687,7 @@ export function activate(context: vscode.ExtensionContext): void {
     reviewController,
     pendingStatusBar,
     toReviewView.onDidChangeCheckboxState(handleCheckboxChange),
+    reviewedView.onDidChangeCheckboxState(handleCheckboxChange),
     mineView.onDidChangeCheckboxState(handleCheckboxChange),
     { dispose: () => detailsPanel.dispose() },
     vscode.authentication.onDidChangeSessions((event) => {

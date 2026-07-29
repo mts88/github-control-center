@@ -56,6 +56,12 @@
           "icon": "$(git-pull-request)"
         },
         {
+          "id": "githubControlCenter.reviewed",
+          "name": "Reviewed",
+          "icon": "$(git-pull-request)",
+          "when": "!config.githubControlCenter.toReview.hideReviewed"
+        },
+        {
           "id": "githubControlCenter.mine",
           "name": "My PRs",
           "icon": "$(git-pull-request)"
@@ -71,6 +77,16 @@
       {
         "view": "githubControlCenter.toReview",
         "contents": "No pull requests waiting for your review. All clear. 🎉",
+        "when": "githubControlCenter.signedIn"
+      },
+      {
+        "view": "githubControlCenter.reviewed",
+        "contents": "Sign in to GitHub to see the pull requests you approved.\n[Sign in to GitHub](command:githubControlCenter.signIn)",
+        "when": "!githubControlCenter.signedIn"
+      },
+      {
+        "view": "githubControlCenter.reviewed",
+        "contents": "No approved pull requests. Approvals land here until new commits arrive or the pull request is merged.",
         "when": "githubControlCenter.signedIn"
       },
       {
@@ -212,7 +228,7 @@
             "type": "boolean",
             "default": true,
             "order": 1,
-            "description": "Include PRs waiting for your review in the activity bar badge count."
+            "description": "Include the To Review view (PRs waiting for your review plus reviews needing your attention) in the activity bar badge count."
           },
           "githubControlCenter.badge.countMine": {
             "type": "boolean",
@@ -224,7 +240,7 @@
             "type": "boolean",
             "default": false,
             "order": 3,
-            "description": "Include PRs you already reviewed (no active re-request) in the activity bar badge count. Off by default: only PRs actually waiting on you count. Has no effect while toReview.hideReviewed is on (hidden PRs are never counted)."
+            "description": "Include the Reviewed view (PRs you approved that are still current) in the activity bar badge count. Off by default: only PRs actually waiting on you count. Has no effect while toReview.hideReviewed is on (hidden PRs are never counted)."
           },
           "githubControlCenter.notifications.enabled": {
             "type": "boolean",
@@ -257,7 +273,7 @@
             "type": "boolean",
             "default": false,
             "order": 3,
-            "description": "Hide open PRs you already reviewed (approved, stale, or changes requested) from the To Review list while they wait for a re-request."
+            "description": "Hide open PRs you already reviewed (approved, stale, or changes requested) everywhere while they wait for a re-request: the Reviewed view disappears and no reviewed rows show in To Review."
           }
         }
       },
@@ -361,27 +377,27 @@
       "view/title": [
         {
           "command": "githubControlCenter.refresh",
-          "when": "view == githubControlCenter.toReview || view == githubControlCenter.mine",
+          "when": "view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine",
           "group": "navigation@1"
         },
         {
           "command": "githubControlCenter.viewFilesAsTree",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && githubControlCenter.filesLayout == flat",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && githubControlCenter.filesLayout == flat",
           "group": "1_manage@1"
         },
         {
           "command": "githubControlCenter.viewFilesAsList",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && githubControlCenter.filesLayout == tree",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && githubControlCenter.filesLayout == tree",
           "group": "1_manage@1"
         },
         {
           "command": "githubControlCenter.openSettings",
-          "when": "view == githubControlCenter.toReview || view == githubControlCenter.mine",
+          "when": "view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine",
           "group": "navigation@2"
         },
         {
           "command": "githubControlCenter.manageMutedRepos",
-          "when": "view == githubControlCenter.toReview || view == githubControlCenter.mine",
+          "when": "view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine",
           "group": "1_manage"
         }
       ],
@@ -446,32 +462,32 @@
       "view/item/context": [
         {
           "command": "githubControlCenter.checkoutPr",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && viewItem == pr",
           "group": "inline@1"
         },
         {
           "command": "githubControlCenter.openPr",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && viewItem == pr",
           "group": "inline@2"
         },
         {
           "command": "githubControlCenter.copyPrUrl",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && viewItem == pr",
           "group": "1_copy@1"
         },
         {
           "command": "githubControlCenter.copyBranchName",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && viewItem == pr",
           "group": "1_copy@2"
         },
         {
           "command": "githubControlCenter.muteRepo",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && viewItem == pr",
           "group": "2_manage@1"
         },
         {
           "command": "githubControlCenter.muteOrg",
-          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.mine) && viewItem == pr",
+          "when": "(view == githubControlCenter.toReview || view == githubControlCenter.reviewed || view == githubControlCenter.mine) && viewItem == pr",
           "group": "2_manage@2"
         }
       ],
