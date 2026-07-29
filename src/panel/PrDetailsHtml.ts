@@ -96,6 +96,45 @@ const BASE_STYLE = `
     padding: 1px 6px;
     border-radius: 6px;
   }
+  .branch-action {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    background: transparent;
+    border: none;
+    padding: 2px;
+    margin-left: 2px;
+    cursor: pointer;
+    color: var(--vscode-textLink-foreground);
+  }
+  /* webviews suppress native title tooltips, so hover hints are CSS-only */
+  .branch-action::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 5px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--vscode-editorHoverWidget-background, var(--gr-box-bg));
+    color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--gr-border));
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s;
+    z-index: 10;
+  }
+  .branch-action:hover::after { opacity: 1; }
+  .branch-action svg { width: 12px; height: 12px; }
+  .branch-action:hover { color: var(--vscode-textLink-activeForeground); }
+  .branch-action .copy-icon, .branch-action .copied-icon { display: inline-flex; }
+  #copy-branch .copied-icon { display: none; }
+  #copy-branch.copied { color: var(--vscode-charts-green, var(--gr-green)); }
+  #copy-branch.copied .copy-icon { display: none; }
+  #copy-branch.copied .copied-icon { display: inline-flex; }
 
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 28px; align-items: start; }
   @media (max-width: 720px) { .layout { grid-template-columns: minmax(0, 1fr); } }
@@ -416,6 +455,14 @@ function renderBriefSection(brief?: IBriefState): string {
   </details>`;
 }
 
+// GitHub octicons (copy / check), inline SVG: part of the document, so the nonce-only CSP is untouched
+const COPY_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>';
+const CHECK_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 1.06-1.06l2.72 2.72 6.72-6.72a.751.751 0 0 1 1.06 0Z"/></svg>';
+const BRANCH_ICON_SVG =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>';
+
 function renderHeader(details: IPrDetails, brief?: IBriefState): string {
   const pill = details.state === "OPEN" && details.isDraft ? { css: "draft", label: "Draft" } : PILLS[details.state];
   const repoUrl = details.url.replace(/\/pull\/\d+$/, "");
@@ -431,7 +478,7 @@ function renderHeader(details: IPrDetails, brief?: IBriefState): string {
       <span class="merge-sentence">
         <strong>${escapeHtml(details.author)}</strong> wants to merge ${details.commitsCount} ${details.commitsCount === 1 ? "commit" : "commits"}
         into <span class="branch">${escapeHtml(details.baseRefName)}</span>
-        from <span class="branch">${escapeHtml(details.headRefName)}</span>
+        from <span class="branch" id="head-branch">${escapeHtml(details.headRefName)}</span><button id="copy-branch" class="branch-action" data-tooltip="Copy branch name" aria-label="Copy branch name"><span class="copy-icon">${COPY_ICON_SVG}</span><span class="copied-icon">${CHECK_ICON_SVG}</span></button>${details.state === "OPEN" ? `<button id="checkout-branch" class="branch-action" data-tooltip="Checkout branch" aria-label="Checkout branch">${BRANCH_ICON_SVG}</button>` : ""}
       </span>
     </div>${renderHeaderActions(brief)}
   </header>`;
@@ -791,6 +838,20 @@ export function renderPrDetailsHtml(
     wire("ready", () => ({ command: "readyForReview" }));
     wire("update-branch", () => ({ command: "updateBranch", method: document.getElementById("update-method").value }));
     wire("checkout", () => ({ command: "checkout" }));
+    wire("checkout-branch", () => ({ command: "checkout" }));
+
+    // the branch name never leaves the webview: copied via the clipboard API, no message posted
+    const copyBranchButton = document.getElementById("copy-branch");
+    if (copyBranchButton) {
+      let copiedResetTimer;
+      copyBranchButton.addEventListener("click", () => {
+        navigator.clipboard.writeText(document.getElementById("head-branch").textContent).then(() => {
+          copyBranchButton.classList.add("copied");
+          clearTimeout(copiedResetTimer);
+          copiedResetTimer = setTimeout(() => copyBranchButton.classList.remove("copied"), 1500);
+        });
+      });
+    }
 
     // brief is read-only and re-renders on its own: wired outside send() so a click
     // does not freeze the composer and the other action buttons. Its self-disable is not part

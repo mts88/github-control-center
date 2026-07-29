@@ -149,6 +149,23 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain('<a href="https://github.com/acme/repo">acme/repo</a>');
       expect(html).toContain('<a href="https://github.com/acme/repo/pull/42">Open on GitHub</a>');
     });
+
+    it("should render a copy button right after the head branch name", () => {
+      const html = render();
+      expect(html).toContain('<span class="branch" id="head-branch">feature/thing</span><button id="copy-branch"');
+    });
+
+    it("should copy inside the webview without posting a message", () => {
+      const html = render();
+      expect(html).toContain("navigator.clipboard.writeText");
+      expect(html).not.toContain('command: "copyBranch"');
+    });
+
+    it("should render a checkout icon next to the copy button only on open PRs", () => {
+      expect(render()).toContain('<button id="checkout-branch"');
+      expect(render({ state: "MERGED" })).not.toContain('<button id="checkout-branch"');
+      expect(render({ state: "CLOSED" })).not.toContain('<button id="checkout-branch"');
+    });
   });
 
   describe("state pill", () => {
