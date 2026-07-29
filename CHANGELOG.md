@@ -1,3 +1,10 @@
+## [1.11.1](https://github.com/mts88/github-control-center/compare/v1.11.0...v1.11.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* package CHANGELOG.md so marketplace changelog tabs populate ([#27](https://github.com/mts88/github-control-center/issues/27)) ([3919c5c](https://github.com/mts88/github-control-center/commit/3919c5cb7242d70071800d380d948305d089077d))
+
 # [1.11.0](https://github.com/mts88/github-control-center/compare/v1.10.0...v1.11.0) (2026-07-29)
 
 
