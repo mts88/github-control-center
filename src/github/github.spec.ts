@@ -213,7 +213,20 @@ interface IDetailsNodeOverrides {
   latestReviews?: unknown[];
   comments?: { totalCount: number; nodes: unknown[] };
   reviews?: { totalCount: number; nodes: unknown[] };
+  historyCommits?: { totalCount: number; nodes: unknown[] };
   repository?: unknown;
+}
+
+function buildHistoryCommit(committedDate: string) {
+  return {
+    commit: {
+      abbreviatedOid: "abc1234",
+      messageHeadline: "fix: rebased",
+      committedDate,
+      url: "https://github.com/acme/repo/commit/abc1234",
+      author: { name: "Mario", avatarUrl: "", user: { login: "mario" } },
+    },
+  };
 }
 
 function buildDetailsNode(overrides: IDetailsNodeOverrides = {}) {
@@ -245,7 +258,8 @@ function buildDetailsNode(overrides: IDetailsNodeOverrides = {}) {
     reviewDecision: "REVIEW_REQUIRED",
     viewerDidAuthor: false,
     reviewRequests: { nodes: overrides.reviewRequests ?? [{ requestedReviewer: { login: "mario" } }] },
-    latestReviews: { nodes: overrides.latestReviews ?? [{ author: { login: "luigi" }, state: "APPROVED" }] },
+    latestReviews: { nodes: overrides.latestReviews ?? [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "head-oid" } }] },
+    historyCommits: overrides.historyCommits ?? { totalCount: 0, nodes: [] },
     comments: overrides.comments ?? {
       totalCount: 1,
       nodes: [{ author: { login: "mario", avatarUrl: "https://avatars.example/mario" }, bodyHTML: "<p>Nice</p>", createdAt: "2026-07-02T00:00:00Z" }],
@@ -323,8 +337,8 @@ describe("fetchPrDetails", () => {
       viewerDidAuthor: false,
       canApprove: true,
       reviewers: [
-        { name: "luigi", state: "APPROVED" },
-        { name: "mario", state: "REQUESTED" },
+        { name: "luigi", state: "APPROVED", isStale: false },
+        { name: "mario", state: "REQUESTED", isStale: false },
       ],
       checks: [
         { name: "build", status: "SUCCESS" },
@@ -372,6 +386,101 @@ describe("fetchPrDetails", () => {
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.timeline.map((item) => item.author)).toEqual(["early", "late"]);
+  });
+
+  it("should interleave history commits chronologically as commit timeline items", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "jane" },
+        node: buildDetailsNode({
+          historyCommits: {
+            totalCount: 1,
+            nodes: [
+              {
+                commit: {
+                  abbreviatedOid: "abc1234",
+                  messageHeadline: "fix: something",
+                  committedDate: "2026-07-02T12:00:00Z",
+                  url: "https://github.com/acme/repo/commit/abc1234",
+                  author: { name: "Mario Rossi", avatarUrl: "https://avatars.example/mario", user: { login: "mario" } },
+                },
+              },
+            ],
+          },
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.timeline.map((item) => item.kind)).toEqual(["comment", "commit", "review"]);
+    expect(details.timeline[1]).toEqual({
+      kind: "commit",
+      author: "mario",
+      avatarUrl: "https://avatars.example/mario",
+      bodyHtml: "",
+      createdAt: "2026-07-02T12:00:00Z",
+      commitMessage: "fix: something",
+      commitSha: "abc1234",
+      commitUrl: "https://github.com/acme/repo/commit/abc1234",
+    });
+  });
+
+  it("should fall back to the git author name for commits without a GitHub user", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "jane" },
+        node: buildDetailsNode({
+          historyCommits: {
+            totalCount: 1,
+            nodes: [
+              {
+                commit: {
+                  abbreviatedOid: "abc1234",
+                  messageHeadline: "fix: something",
+                  committedDate: "2026-07-02T12:00:00Z",
+                  url: "https://github.com/acme/repo/commit/abc1234",
+                  author: { name: "Mario Rossi", avatarUrl: "https://avatars.example/anon", user: null },
+                },
+              },
+            ],
+          },
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.timeline[1]?.author).toBe("Mario Rossi");
+  });
+
+  it("should flag the timeline as truncated when older commits exist beyond the fetch cap", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "jane" },
+        node: buildDetailsNode({ historyCommits: { totalCount: 45, nodes: [] } }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.timelineTruncated).toBe(true);
+  });
+
+  it("should mark an approval pinned to an older commit as stale", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "jane" },
+        node: buildDetailsNode({
+          reviewRequests: [],
+          latestReviews: [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "old-oid" } }],
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.reviewers).toEqual([{ name: "luigi", state: "APPROVED", isStale: true }]);
   });
 
   it("should hide empty COMMENTED review shells but keep state-bearing reviews", async () => {
@@ -432,7 +541,7 @@ describe("fetchPrDetails", () => {
 
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
-    expect(details.reviewers).toEqual([{ name: "luigi", state: "REQUESTED" }]);
+    expect(details.reviewers).toEqual([{ name: "luigi", state: "REQUESTED", isStale: false }]);
   });
 
   it("should block re-approval when the viewer's approval is still current", async () => {
@@ -460,6 +569,43 @@ describe("fetchPrDetails", () => {
           reviewRequests: [],
           latestReviews: [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "old-oid" } }],
           headRefOid: "new-oid",
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.canApprove).toBe(true);
+  });
+
+  // after a force-push GitHub re-pins latestReviews.commit to the new head, so the oid comparison
+  // alone misses staleness — the submittedAt vs newest committedDate check catches it
+  it("should mark an approval submitted before the newest commit as stale even when re-pinned to the head", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "jane" },
+        node: buildDetailsNode({
+          reviewRequests: [],
+          latestReviews: [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "head-oid" }, submittedAt: "2026-07-24T10:47:00Z" }],
+          historyCommits: { totalCount: 1, nodes: [buildHistoryCommit("2026-07-24T13:05:58Z")] },
+        }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.reviewers).toEqual([{ name: "luigi", state: "APPROVED", isStale: true }]);
+  });
+
+  it("should allow re-approval when commits landed after the viewer's approval despite a head-pinned review", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "luigi" },
+        node: buildDetailsNode({
+          reviewRequests: [],
+          latestReviews: [{ author: { login: "luigi" }, state: "APPROVED", commit: { oid: "head-oid" }, submittedAt: "2026-07-24T10:47:00Z" }],
+          historyCommits: { totalCount: 1, nodes: [buildHistoryCommit("2026-07-24T13:05:58Z")] },
+          headRefOid: "head-oid",
         }),
       },
     });

@@ -19,6 +19,16 @@ const REVIEW_STATE_LABELS: Record<string, string> = {
   PENDING: "started a review",
 };
 
+// text glyphs (not emoji, except the comment bubble) so theme colors apply via CSS
+const REVIEW_STATE_ICONS: Record<string, string> = {
+  APPROVED: "✓",
+  CHANGES_REQUESTED: "↻",
+  COMMENTED: "💬",
+  DISMISSED: "●",
+  PENDING: "●",
+  REQUESTED: "●",
+};
+
 const REVIEW_DECISION_LABELS: Record<string, string> = {
   APPROVED: "✓ Changes approved",
   CHANGES_REQUESTED: "✗ Changes requested",
@@ -131,6 +141,11 @@ const BASE_STYLE = `
   .box-body code { background: var(--vscode-textCodeBlock-background); border-radius: 3px; }
   .review-APPROVED { border-left: 3px solid var(--gr-green); }
   .review-CHANGES_REQUESTED { border-left: 3px solid var(--gr-red); }
+  .commit-group { position: relative; margin: 0 0 16px 40px; color: var(--gr-muted); }
+  .commit-group-header { padding: 4px 0; }
+  .commit-line { display: flex; align-items: baseline; gap: 8px; padding: 1px 0; min-width: 0; }
+  .commit-msg { color: var(--vscode-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .commit-sha { font-family: var(--vscode-editor-font-family, monospace); font-size: 0.85em; }
   .code-comments { padding: 0 12px 10px; }
   .older-link { margin: 0 0 16px 40px; display: block; }
 
@@ -194,6 +209,10 @@ const BASE_STYLE = `
   .reviewer-state { color: var(--gr-muted); white-space: nowrap; }
   .reviewer-state.APPROVED { color: var(--gr-green); }
   .reviewer-state.CHANGES_REQUESTED { color: var(--gr-red); }
+  .review-icon { color: var(--gr-muted); }
+  .review-icon.APPROVED { color: var(--gr-green); }
+  .review-icon.CHANGES_REQUESTED { color: var(--gr-red); }
+  .reviewer-state.stale { color: var(--gr-yellow); }
   .label-pill {
     display: inline-block;
     padding: 1px 10px;
@@ -435,9 +454,54 @@ function renderDescription(details: IPrDetails, now: number): string {
   </div>`;
 }
 
+// consecutive commits collapse into one avatar + list (GitHub-style) so a push burst stays compact
+function renderTimeline(items: IPrTimelineItem[], prUrl: string, now: number): string {
+  const rendered: string[] = [];
+  let commitRun: IPrTimelineItem[] = [];
+  const flushCommitRun = () => {
+    if (commitRun.length > 0) {
+      rendered.push(renderCommitGroup(commitRun, now));
+      commitRun = [];
+    }
+  };
+  for (const item of items) {
+    if (item.kind === "commit") {
+      commitRun.push(item);
+      continue;
+    }
+    flushCommitRun();
+    rendered.push(renderTimelineItem(item, prUrl, now));
+  }
+  flushCommitRun();
+  return rendered.join("");
+}
+
+function renderCommitGroup(commits: IPrTimelineItem[], now: number): string {
+  const [first] = commits;
+  const lastCommit = commits[commits.length - 1];
+  const countLabel = commits.length === 1 ? "added a commit" : `added ${commits.length} commits`;
+  const lines = commits
+    .map(
+      (commit) => `
+      <div class="commit-line">
+        <span class="commit-msg">${escapeHtml(commit.commitMessage ?? "")}</span>
+        <a class="commit-sha" href="${escapeHtml(commit.commitUrl ?? "")}">${escapeHtml(commit.commitSha ?? "")}</a>
+      </div>`,
+    )
+    .join("");
+  return `
+  <div class="commit-group">
+    ${renderAvatar(first.avatarUrl, first.author)}
+    <div class="commit-group-header"><span class="author">${escapeHtml(first.author)}</span> ${countLabel} ${formatRelativeDate(lastCommit.createdAt, now)}</div>
+    ${lines}
+  </div>`;
+}
+
 function renderTimelineItem(item: IPrTimelineItem, prUrl: string, now: number): string {
   const action = item.kind === "review" ? (REVIEW_STATE_LABELS[item.reviewState ?? ""] ?? "reviewed") : "commented";
   const reviewClass = item.kind === "review" ? ` review-${escapeHtml(item.reviewState ?? "")}` : "";
+  const icon = item.kind === "review" ? (REVIEW_STATE_ICONS[item.reviewState ?? ""] ?? "●") : REVIEW_STATE_ICONS.COMMENTED;
+  const iconClass = item.kind === "review" && item.reviewState ? ` ${escapeHtml(item.reviewState)}` : "";
   const hasBody = item.bodyHtml !== "";
   const codeComments =
     item.codeCommentsCount && item.codeCommentsCount > 0
@@ -447,7 +511,7 @@ function renderTimelineItem(item: IPrTimelineItem, prUrl: string, now: number): 
   <div class="box${reviewClass}${hasBody ? "" : " no-body"}">
     ${renderAvatar(item.avatarUrl, item.author)}
     <div class="box-header">
-      <span><span class="author">${escapeHtml(item.author)}</span> ${action} ${formatRelativeDate(item.createdAt, now)}</span>
+      <span><span class="review-icon${iconClass}">${icon}</span> <span class="author">${escapeHtml(item.author)}</span> ${action} ${formatRelativeDate(item.createdAt, now)}</span>
     </div>
     ${hasBody ? `<div class="box-body">${item.bodyHtml}</div>` : ""}
     ${codeComments}
@@ -557,7 +621,7 @@ function renderSidebar(details: IPrDetails): string {
   const reviewers = details.reviewers
     .map(
       (reviewer) =>
-        `<li><span>${escapeHtml(reviewer.name)}</span><span class="reviewer-state ${escapeHtml(reviewer.state)}">${escapeHtml(reviewer.state.toLowerCase().replaceAll("_", " "))}</span></li>`,
+        `<li><span>${escapeHtml(reviewer.name)}</span><span class="reviewer-state ${escapeHtml(reviewer.state)}${reviewer.isStale ? " stale" : ""}">${REVIEW_STATE_ICONS[reviewer.state] ?? "●"} ${escapeHtml(reviewer.state.toLowerCase().replaceAll("_", " "))}${reviewer.isStale ? " · stale" : ""}</span></li>`,
     )
     .join("");
 
@@ -670,7 +734,7 @@ export function renderPrDetailsHtml(
     bodyHtml: replaceMermaidSections(details.bodyHtml),
     timeline: details.timeline.map((item) => ({ ...item, bodyHtml: replaceMermaidSections(item.bodyHtml) })),
   };
-  const timelineItems = processedDetails.timeline.map((item) => renderTimelineItem(item, processedDetails.url, now)).join("");
+  const timelineItems = renderTimeline(processedDetails.timeline, processedDetails.url, now);
   const olderLink = processedDetails.timelineTruncated ? `<a class="older-link" href="${escapeHtml(processedDetails.url)}">View older conversation on GitHub</a>` : "";
   const mermaidSupport = renderMermaidSupport(processedDetails, nonce, mermaidScriptUri);
 
