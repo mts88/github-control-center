@@ -466,6 +466,10 @@ function renderTimeline(items: IPrTimelineItem[], prUrl: string, now: number): s
   };
   for (const item of items) {
     if (item.kind === "commit") {
+      const isNewAuthorRun = commitRun.length > 0 && commitRun[commitRun.length - 1].author !== item.author;
+      if (isNewAuthorRun) {
+        flushCommitRun();
+      }
       commitRun.push(item);
       continue;
     }

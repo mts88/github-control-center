@@ -225,6 +225,34 @@ describe("renderPrDetailsHtml", () => {
       expect(html.match(/added a commit/g)).toHaveLength(2);
     });
 
+    it("should split commit groups when the author changes so each run keeps its own attribution", () => {
+      const commit = (author: string, sha: string, createdAt: string) => ({
+        kind: "commit" as const,
+        author,
+        avatarUrl: "",
+        bodyHtml: "",
+        createdAt,
+        commitMessage: "fix: one",
+        commitSha: sha,
+        commitUrl: `https://github.com/acme/repo/commit/${sha}`,
+      });
+      const html = render({
+        timeline: [
+          commit("mario", "aaa1111", "2026-07-02T00:00:00Z"),
+          commit("mario", "bbb2222", "2026-07-02T01:00:00Z"),
+          commit("mario", "ccc3333", "2026-07-02T02:00:00Z"),
+          commit("luigi", "ddd4444", "2026-07-02T03:00:00Z"),
+          commit("mario", "eee5555", "2026-07-02T04:00:00Z"),
+        ],
+      });
+
+      expect(html.match(/class="commit-group"/g)).toHaveLength(3);
+      const groupHeaders = [...html.matchAll(/<span class="author">(\w+)<\/span> (added (?:a commit|\d+ commits))/g)].map(
+        (headerMatch) => `${headerMatch[1]} ${headerMatch[2]}`,
+      );
+      expect(groupHeaders).toEqual(["mario added 3 commits", "luigi added a commit", "mario added a commit"]);
+    });
+
     it("should escape commit messages", () => {
       const html = render({
         timeline: [
