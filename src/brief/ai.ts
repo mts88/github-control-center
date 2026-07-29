@@ -1,33 +1,13 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { killChildTree, prepareSpawn, useShell } from "./spawn";
 
 export const SYSTEM_PROMPT_FILENAME = "github-control-center-brief-system-prompt.txt";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DETECT_TIMEOUT_MS = 10_000;
 const STDERR_TAIL_CHARS = 400;
-
-function useShell(): boolean {
-  // npm installs claude as a .cmd shim on Windows, which spawn cannot run without a shell.
-  // Safe: nothing untrusted enters the command line — the prompt travels via stdin.
-  return process.platform === "win32";
-}
-
-function quoteForShell(argument: string): string {
-  const needsQuoting = argument === "" || /[\s"]/.test(argument);
-  if (!needsQuoting) {
-    return argument;
-  }
-  return `"${argument.replaceAll('"', '\\"')}"`;
-}
-
-function prepareSpawn(command: string, args: string[]): { command: string; args: string[] } {
-  if (!useShell()) {
-    return { command, args };
-  }
-  return { command: quoteForShell(command), args: args.map(quoteForShell) };
-}
 
 export function detectAi(command: string, timeoutMs = DETECT_TIMEOUT_MS): Promise<boolean> {
   return new Promise((resolve) => {
@@ -54,16 +34,6 @@ export function detectAi(command: string, timeoutMs = DETECT_TIMEOUT_MS): Promis
     child.stdin?.on("error", () => {});
     child.stdin?.end();
   });
-}
-
-function killChildTree(child: ChildProcess): void {
-  if (process.platform === "win32" && child.pid !== undefined) {
-    // shell: true wraps the CLI in cmd.exe, and child.kill() would only terminate the
-    // wrapper — taskkill walks the tree so the actual claude process dies too
-    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"]);
-    return;
-  }
-  child.kill();
 }
 
 function toFailureMessage(exitCode: number | null, stderr: string): string {

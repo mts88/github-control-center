@@ -302,13 +302,16 @@
           "githubControlCenter.ai.backend": {
             "type": "string",
             "enum": [
-              "claude-code"
+              "claude-code",
+              "codex"
             ],
             "enumItemLabels": [
-              "Claude Code"
+              "Claude Code",
+              "Codex (OpenAI)"
             ],
             "enumDescriptions": [
-              "The Claude Code CLI in headless mode, using your existing Claude subscription"
+              "The Claude Code CLI in headless mode, using your existing Claude subscription",
+              "The OpenAI Codex CLI in headless mode, using your existing ChatGPT subscription"
             ],
             "default": "claude-code",
             "scope": "machine",
@@ -353,6 +356,38 @@
             "scope": "machine",
             "order": 4,
             "description": "Model passed to `claude --model`. Used only when the AI backend is Claude Code. Machine-scoped: a workspace cannot point it at an arbitrary value."
+          },
+          "githubControlCenter.ai.claude.reviewModel": {
+            "type": "string",
+            "enum": [
+              "sonnet",
+              "haiku",
+              "opus",
+              ""
+            ],
+            "enumItemLabels": [
+              "Sonnet",
+              "Haiku",
+              "Opus",
+              "Same as ai.claude.model"
+            ],
+            "enumDescriptions": [
+              "Fast and balanced",
+              "Fastest and cheapest",
+              "Most capable, slower and more expensive — recommended for AI Review",
+              "Falls back to the ai.claude.model setting"
+            ],
+            "default": "",
+            "scope": "machine",
+            "order": 5,
+            "description": "Model passed to `claude --model` for AI Review runs, independent of the PR brief model. Used only when the AI backend is Claude Code; can also be overridden per run from the panel. Machine-scoped: a workspace cannot point it at an arbitrary value."
+          },
+          "githubControlCenter.ai.codex.command": {
+            "type": "string",
+            "default": "codex",
+            "scope": "machine",
+            "order": 6,
+            "description": "Path to the OpenAI Codex CLI. Used only when the AI backend is Codex. Machine-scoped: a workspace cannot override it. AI features stay hidden when the binary is not found. Only use this backend for PRs whose authors you trust — see the README for details."
           }
         }
       }

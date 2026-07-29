@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { renderMessageHtml, renderPrDetailsHtml } from "./PrDetailsHtml";
+import type { IReviewState } from "../review/reviewState";
 import type { IBriefState, IPrDetails, MergeMethod, UpdateBranchMethod } from "../core/types";
 
 export type IPanelMessage =
@@ -10,6 +11,9 @@ export type IPanelMessage =
   | { command: "updateBranch"; method: UpdateBranchMethod }
   | { command: "checkout" }
   | { command: "brief" }
+  | { command: "aiReview" }
+  | { command: "aiReviewPickModel" }
+  | { command: "promoteFinding"; index: number }
   | { command: "composerState"; hasText: boolean };
 
 export function formatPrTabTitle(pr: { repo: string; title: string; number: number }): string {
@@ -34,15 +38,15 @@ export class PrDetailsPanel {
     this.render(title, renderMessageHtml(message, crypto.randomUUID()));
   }
 
-  showDetails(details: IPrDetails, brief?: IBriefState): void {
+  showDetails(details: IPrDetails, brief?: IBriefState, review?: IReviewState, canPickReviewModel?: boolean): void {
     const panel = this.ensurePanel(formatPrTabTitle(details));
-    this.renderDetails(panel, details, brief);
+    this.renderDetails(panel, details, brief, review, canPickReviewModel);
   }
 
   // background variant of showDetails: never creates the panel, never reveals it
-  updateDetails(details: IPrDetails, brief?: IBriefState): void {
+  updateDetails(details: IPrDetails, brief?: IBriefState, review?: IReviewState, canPickReviewModel?: boolean): void {
     if (this.panel) {
-      this.renderDetails(this.panel, details, brief);
+      this.renderDetails(this.panel, details, brief, review, canPickReviewModel);
     }
   }
 
@@ -58,13 +62,13 @@ export class PrDetailsPanel {
     this.panel?.dispose();
   }
 
-  private renderDetails(panel: vscode.WebviewPanel, details: IPrDetails, brief?: IBriefState): void {
+  private renderDetails(panel: vscode.WebviewPanel, details: IPrDetails, brief?: IBriefState, review?: IReviewState, canPickReviewModel?: boolean): void {
     const mermaidScriptUri = panel.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "dist", "mermaid.min.js")).toString();
     const defaultUpdateMethod = vscode.workspace
       .getConfiguration("githubControlCenter")
       .get<UpdateBranchMethod>("updateBranch.defaultMethod", "REBASE");
     panel.title = formatPrTabTitle(details);
-    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod, brief);
+    panel.webview.html = renderPrDetailsHtml(details, crypto.randomUUID(), Date.now(), mermaidScriptUri, defaultUpdateMethod, brief, review, canPickReviewModel);
   }
 
   private render(title: string, html: string): void {

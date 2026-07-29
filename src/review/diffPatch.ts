@@ -13,7 +13,8 @@ export interface ILineRange {
   end: number;
 }
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+/** exported for reviewFindings.ts, which needs the same hunk-header detection while walking line content */
+export const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 export function parseHunks(patch: string): IHunk[] {
   const hunks: IHunk[] = [];
