@@ -179,7 +179,9 @@ function toReviewGlyph(pr: IPullRequest): string | undefined {
   if (!pr.reviewDecision) {
     return undefined;
   }
-  const isApprovedByViewer = pr.reviewDecision === "APPROVED" && pr.viewerReviewState === "APPROVED";
+  // a stale viewer approval must not render the "current approval" check — it falls back to the generic ☑
+  const isApprovedByViewer =
+    pr.reviewDecision === "APPROVED" && pr.viewerReviewState === "APPROVED" && !pr.isViewerApprovalStale;
   if (isApprovedByViewer) {
     return "✓";
   }

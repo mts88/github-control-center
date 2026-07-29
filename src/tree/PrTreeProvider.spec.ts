@@ -154,6 +154,14 @@ describe("PrTreeProvider", () => {
       expect(item.label).toBe("✓ A title");
     });
 
+    it("should fall back to the boxed check glyph when the viewer's approval is stale", () => {
+      const item = getPrTreeItem(
+        buildPr({ reviewDecision: "APPROVED", viewerReviewState: "APPROVED", isViewerApprovalStale: true })
+      );
+
+      expect(item.label).toBe("☑ A title");
+    });
+
     it("should use the boxed check glyph when the PR is approved by someone else", () => {
       const item = getPrTreeItem(buildPr({ reviewDecision: "APPROVED", viewerReviewState: "COMMENTED" }));
 
