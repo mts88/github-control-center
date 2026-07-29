@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/mts88/github-control-center/compare/v1.8.1...v1.9.0) (2026-07-29)
+
+
+### Features
+
+* review-state icons, commit timeline, and stale approval flag ([#24](https://github.com/mts88/github-control-center/issues/24)) ([aa6a455](https://github.com/mts88/github-control-center/commit/aa6a4558651c81d88190077a01341ff9800ec4e3))
+
 ## [1.8.1](https://github.com/mts88/github-control-center/compare/v1.8.0...v1.8.1) (2026-07-22)
 
 
