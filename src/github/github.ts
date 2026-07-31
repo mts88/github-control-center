@@ -117,6 +117,9 @@ const DETAILS_QUERY = `
           totalCount
           nodes { author { login avatarUrl } state bodyHTML createdAt comments { totalCount } }
         }
+        pendingReviews: reviews(states: [PENDING], first: 10) {
+          nodes { author { login } comments { totalCount } }
+        }
         historyCommits: commits(last: 30) {
           totalCount
           nodes {
@@ -252,6 +255,7 @@ interface IGraphQlDetailsNode {
       comments: { totalCount: number };
     }>;
   };
+  pendingReviews: { nodes: Array<{ author: { login: string } | null; comments: { totalCount: number } }> };
   commits: {
     totalCount: number;
     nodes: Array<{
@@ -716,6 +720,8 @@ function toPrDetails(node: IGraphQlDetailsNode, viewerLogin: string): IPrDetails
     latestCheckByName.set(check.name, check);
   }
   const checks = [...latestCheckByName.values()];
+  // the API only exposes the viewer's own PENDING reviews; the author filter mirrors fetchReviewThreads
+  const pendingReview = node.pendingReviews.nodes.find((review) => review.author?.login === viewerLogin);
   return {
     number: node.number,
     title: node.title,
@@ -744,6 +750,7 @@ function toPrDetails(node: IGraphQlDetailsNode, viewerLogin: string): IPrDetails
     reviewDecision: node.reviewDecision,
     viewerDidAuthor: node.viewerDidAuthor,
     canApprove: toCanApprove(node, viewerLogin),
+    pendingReviewCommentCount: pendingReview ? pendingReview.comments.totalCount : null,
     reviewers: toReviewers(node),
     checks,
     // Subtract the collapsed duplicates so the "N more checks" hint only counts nodes beyond the fetch cap.

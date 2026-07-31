@@ -28,6 +28,7 @@ function buildDetails(overrides: Partial<IPrDetails> = {}): IPrDetails {
     reviewDecision: null,
     viewerDidAuthor: false,
     canApprove: true,
+    pendingReviewCommentCount: null,
     reviewers: [],
     checks: [],
     checksTotal: 0,

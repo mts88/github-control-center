@@ -59,6 +59,7 @@ function buildDetails(overrides: Partial<IPrDetails> = {}): IPrDetails {
     checksTotal: 0,
     timeline: [],
     timelineTruncated: false,
+    pendingReviewCommentCount: null,
     ...overrides,
   };
 }
@@ -91,6 +92,8 @@ function buildDeps() {
     runAiPrompt: vi.fn().mockResolvedValue("## What changed\n- did stuff"),
     addPrComment: vi.fn().mockResolvedValue(undefined),
     submitPrReview: vi.fn().mockResolvedValue(undefined),
+    submitPendingReview: vi.fn().mockResolvedValue(undefined),
+    getPendingReviewId: vi.fn().mockReturnValue(undefined),
     mergePr: vi.fn().mockResolvedValue(undefined),
     markPrReadyForReview: vi.fn().mockResolvedValue(undefined),
     updatePrBranch: vi.fn().mockResolvedValue(undefined),
@@ -344,6 +347,137 @@ describe("DetailsSession", () => {
       await flush();
 
       expect(deps.recordApproval).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("handleMessage — pending review submission", () => {
+    it("submits the pending review instead of creating a new one when the registry reports it", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "REQUEST_CHANGES", text: "needs work" });
+      await flush();
+
+      expect(deps.submitPendingReview).toHaveBeenCalledWith("token", pr.id, "REQUEST_CHANGES", "needs work");
+      expect(deps.submitPrReview).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the details snapshot when the registry has never loaded the PR", async () => {
+      const pr = buildPr();
+      const deps = buildDeps(); // getPendingReviewId defaults to undefined (registry unknown)
+      deps.fetchPrDetails = vi.fn().mockResolvedValue(buildDetails({ pendingReviewCommentCount: 2 }));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "lgtm" });
+      await flush();
+
+      expect(deps.submitPendingReview).toHaveBeenCalledWith("token", pr.id, "APPROVE", "lgtm");
+      expect(deps.submitPrReview).not.toHaveBeenCalled();
+    });
+
+    it("trusts the registry's known-none over stale details claiming a pending review", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue(null); // registry: loaded, no pending (e.g. just discarded)
+      deps.fetchPrDetails = vi.fn().mockResolvedValue(buildDetails({ pendingReviewCommentCount: 2 }));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.submitPrReview).toHaveBeenCalledWith("token", pr.id, "APPROVE", "");
+      expect(deps.submitPendingReview).not.toHaveBeenCalled();
+    });
+
+    it("records the approval when an APPROVE goes through the pending review path", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.recordApproval).toHaveBeenCalledWith(pr.id, pr.headRefOid);
+    });
+
+    it("surfaces a failed pending submit as an error toast and re-enables the buttons", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      deps.submitPendingReview = vi.fn().mockRejectedValue(new Error("boom"));
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.notify.error).toHaveBeenCalledWith("Approve failed: boom");
+      expect(deps.panel.reenableActions).toHaveBeenCalled();
+      expect(deps.recordApproval).not.toHaveBeenCalled();
+    });
+
+    it("routes a comment through the pending review as a COMMENT submit, after confirmation", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "comment", text: "overall looks fine" });
+      await flush();
+
+      expect(deps.promptModal).toHaveBeenCalledWith(`Submit review with your draft comments: "${pr.title}"?`, "Submit review");
+      expect(deps.submitPendingReview).toHaveBeenCalledWith("token", pr.id, "COMMENT", "overall looks fine");
+      expect(deps.addPrComment).not.toHaveBeenCalled();
+    });
+
+    it("does not submit the pending review when the comment confirmation is declined", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      deps.promptModal = vi.fn().mockResolvedValue(false);
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "comment", text: "overall looks fine" });
+      await flush();
+
+      expect(deps.submitPendingReview).not.toHaveBeenCalled();
+      expect(deps.panel.reenableActions).toHaveBeenCalled();
+    });
+
+    it("allows an empty comment to submit the pending review (drafts carry the content)", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "comment", text: "" });
+      await flush();
+
+      expect(deps.submitPendingReview).toHaveBeenCalledWith("token", pr.id, "COMMENT", "");
+    });
+
+    it("still requires a body to request changes on the pending review path", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "REQUEST_CHANGES", text: "" });
+      await flush();
+
+      expect(deps.notify.warning).toHaveBeenCalled();
+      expect(deps.submitPendingReview).not.toHaveBeenCalled();
     });
   });
 

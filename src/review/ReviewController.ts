@@ -71,6 +71,12 @@ export class ReviewController implements vscode.Disposable {
     return this.statesByPr.get(prId)?.snapshot.pendingReviewId ?? null;
   }
 
+  /** tri-state: undefined = this window has never loaded threads for the PR (fall back to other sources) */
+  getKnownPendingReviewId(prId: string): string | null | undefined {
+    const state = this.statesByPr.get(prId);
+    return state ? state.snapshot.pendingReviewId : undefined;
+  }
+
   registerPr(pr: IPullRequest): void {
     this.prRegistry.set(pr.id, pr);
     this.activeReviewPr = pr;

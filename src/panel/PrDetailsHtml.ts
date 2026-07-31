@@ -658,8 +658,15 @@ function renderComposer(details: IPrDetails): string {
     ? `<button id="request-changes" class="btn-danger">Request changes</button>
        <button id="approve" class="btn-approve"${approveAttrs}>Approve</button>`
     : "";
+  const pendingCount = details.pendingReviewCommentCount;
+  const pendingActions = canReview ? "Comment, Approve or Request changes" : "Comment";
+  const pendingHint =
+    pendingCount === null
+      ? ""
+      : `<div class="neutral">You have a pending review with ${pendingCount} draft ${pendingCount === 1 ? "comment" : "comments"} — ${pendingActions} will submit it.</div>`;
   return `
   <div class="composer">
+    ${pendingHint}
     <textarea id="composer-text" placeholder="Leave a comment"></textarea>
     <div class="buttons">
       ${reviewButtons}

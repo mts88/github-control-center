@@ -32,6 +32,10 @@ export interface IDetailsSessionDeps {
   runAiPrompt(command: string, model: string, systemPrompt: string, prompt: string): Promise<string>;
   addPrComment(token: string, prId: string, body: string): Promise<void>;
   submitPrReview(token: string, prId: string, event: "APPROVE" | "REQUEST_CHANGES", body: string): Promise<void>;
+  /** submits the viewer's existing PENDING review: inline draft comments publish, body becomes the summary */
+  submitPendingReview(token: string, prId: string, event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES", body: string): Promise<void>;
+  /** tri-state from ReviewController: undefined = no thread snapshot loaded in this window yet */
+  getPendingReviewId(prId: string): string | null | undefined;
   mergePr(token: string, prId: string, method: MergeMethod): Promise<void>;
   markPrReadyForReview(token: string, prId: string): Promise<void>;
   updatePrBranch(token: string, prId: string, method: UpdateBranchMethod): Promise<void>;
@@ -219,6 +223,17 @@ export class DetailsSession {
     }
   }
 
+  // the registry (refreshed on every review mutation in this window) wins when it has a snapshot;
+  // the details fetch covers pending reviews created in another window or before a reload, but can
+  // go stale while the composer holds text (silent refresh is blocked exactly then)
+  private hasPendingReview(pr: IPullRequest): boolean {
+    const registryPendingId = this.deps.getPendingReviewId(pr.id);
+    if (registryPendingId !== undefined) {
+      return registryPendingId !== null;
+    }
+    return this.currentDetails?.prId === pr.id && this.currentDetails.details.pendingReviewCommentCount !== null;
+  }
+
   private currentBriefState(pr: IPullRequest): IBriefState | undefined {
     if (!this.aiAvailable) {
       return undefined;
@@ -304,6 +319,17 @@ export class DetailsSession {
     switch (message.command) {
       case "comment": {
         const commentText = message.text.trim();
+        if (this.hasPendingReview(pr)) {
+          // GitHub "Finish your review" parity: the comment submits the pending review (drafts
+          // publish, so it gets a confirmation unlike a plain comment); empty text is legal here
+          const confirmed = await this.confirmAction(`Submit review with your draft comments: "${pr.title}"?`, "Submit review");
+          if (!confirmed) {
+            this.deps.panel.reenableActions();
+            return;
+          }
+          await this.runPrMutation(pr, "Submit review", `Review submitted: ${pr.title}`, (token) => this.deps.submitPendingReview(token, pr.id, "COMMENT", commentText));
+          return;
+        }
         if (!commentText) {
           this.deps.panel.reenableActions();
           return;
@@ -319,6 +345,7 @@ export class DetailsSession {
           this.deps.panel.reenableActions();
           return;
         }
+        const hasPendingReview = this.hasPendingReview(pr);
         const actionLabel = isRequestingChanges ? "Request changes" : "Approve";
         const successMessage = isRequestingChanges ? `Changes requested on: ${pr.title}` : `Approved: ${pr.title}`;
         const confirmed = await this.confirmAction(`${actionLabel}: "${pr.title}"?`, actionLabel);
@@ -327,7 +354,12 @@ export class DetailsSession {
           return;
         }
         await this.runPrMutation(pr, actionLabel, successMessage, async (token) => {
-          await this.deps.submitPrReview(token, pr.id, message.event, reviewText);
+          if (hasPendingReview) {
+            // one pending review per user per PR (GitHub rule): submit it instead of creating a new one
+            await this.deps.submitPendingReview(token, pr.id, message.event, reviewText);
+          } else {
+            await this.deps.submitPrReview(token, pr.id, message.event, reviewText);
+          }
           if (message.event === "APPROVE") {
             this.deps.recordApproval(pr.id, pr.headRefOid);
           }
