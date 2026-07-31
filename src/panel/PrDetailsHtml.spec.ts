@@ -567,6 +567,14 @@ describe("renderPrDetailsHtml", () => {
     it("should not show the pending review hint when no pending review exists", () => {
       expect(render()).not.toContain("pending review with");
     });
+
+    it("should keep the Comment button clickable on an empty composer while a pending review exists", () => {
+      expect(render({ pendingReviewCommentCount: 0 })).toContain("commentButton.disabled = !hasText && false;");
+    });
+
+    it("should disable the Comment button on an empty composer when no pending review exists", () => {
+      expect(render()).toContain("commentButton.disabled = !hasText && true;");
+    });
   });
 
   describe("sidebar", () => {

@@ -878,7 +878,8 @@ export function renderPrDetailsHtml(
 
     function syncComposerButtons() {
       const hasText = composerText.value.trim().length > 0;
-      commentButton.disabled = !hasText;
+      // a pending review submits on Comment even with an empty summary: the drafts carry the content
+      commentButton.disabled = !hasText && ${processedDetails.pendingReviewCommentCount === null};
       if (requestChangesButton) {
         requestChangesButton.disabled = !hasText;
       }
