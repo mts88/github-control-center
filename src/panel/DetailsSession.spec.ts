@@ -394,6 +394,31 @@ describe("DetailsSession", () => {
       expect(deps.submitPendingReview).not.toHaveBeenCalled();
     });
 
+    it("warns in the confirmation that approving publishes the draft comments", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      deps.getPendingReviewId = vi.fn().mockReturnValue("REV_1");
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.promptModal).toHaveBeenCalledWith(`Approve and submit your draft comments: "${pr.title}"?`, "Approve");
+    });
+
+    it("keeps the plain confirmation when no pending review exists", async () => {
+      const pr = buildPr();
+      const deps = buildDeps();
+      const session = new DetailsSession(deps);
+      await session.openPrDetails(pr);
+
+      session.handleMessage({ command: "review", event: "APPROVE", text: "" });
+      await flush();
+
+      expect(deps.promptModal).toHaveBeenCalledWith(`Approve: "${pr.title}"?`, "Approve");
+    });
+
     it("records the approval when an APPROVE goes through the pending review path", async () => {
       const pr = buildPr();
       const deps = buildDeps();

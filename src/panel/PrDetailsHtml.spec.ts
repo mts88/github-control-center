@@ -558,6 +558,12 @@ describe("renderPrDetailsHtml", () => {
       expect(html).toContain("— Comment will submit it.");
     });
 
+    it("should omit the draft count when the pending review has no drafts left", () => {
+      const html = render({ pendingReviewCommentCount: 0 });
+
+      expect(html).toContain("You have a pending review — Comment, Approve or Request changes will submit it.");
+    });
+
     it("should not show the pending review hint when no pending review exists", () => {
       expect(render()).not.toContain("pending review with");
     });

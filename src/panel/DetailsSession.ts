@@ -348,7 +348,9 @@ export class DetailsSession {
         const hasPendingReview = this.hasPendingReview(pr);
         const actionLabel = isRequestingChanges ? "Request changes" : "Approve";
         const successMessage = isRequestingChanges ? `Changes requested on: ${pr.title}` : `Approved: ${pr.title}`;
-        const confirmed = await this.confirmAction(`${actionLabel}: "${pr.title}"?`, actionLabel);
+        // the pending path publishes the draft inline comments too: the confirmation must say so
+        const confirmMessage = hasPendingReview ? `${actionLabel} and submit your draft comments: "${pr.title}"?` : `${actionLabel}: "${pr.title}"?`;
+        const confirmed = await this.confirmAction(confirmMessage, actionLabel);
         if (!confirmed) {
           this.deps.panel.reenableActions();
           return;
