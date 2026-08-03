@@ -1,3 +1,10 @@
+## [1.11.2](https://github.com/mts88/github-control-center/compare/v1.11.1...v1.11.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* submit the pending review from the composer instead of failing ([#28](https://github.com/mts88/github-control-center/issues/28)) ([6d32c8f](https://github.com/mts88/github-control-center/commit/6d32c8f60082cee99108476beea4ed83ee70819c))
+
 ## [1.11.1](https://github.com/mts88/github-control-center/compare/v1.11.0...v1.11.1) (2026-07-29)
 
 
