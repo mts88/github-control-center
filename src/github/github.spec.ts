@@ -263,6 +263,7 @@ interface IDetailsNodeOverrides {
   latestReviews?: unknown[];
   comments?: { totalCount: number; nodes: unknown[] };
   reviews?: { totalCount: number; nodes: unknown[] };
+  pendingReviews?: { nodes: unknown[] };
   historyCommits?: { totalCount: number; nodes: unknown[] };
   repository?: unknown;
 }
@@ -326,6 +327,7 @@ function buildDetailsNode(overrides: IDetailsNodeOverrides = {}) {
         },
       ],
     },
+    pendingReviews: overrides.pendingReviews ?? { nodes: [] },
     commits: {
       totalCount: 3,
       nodes: [
@@ -386,6 +388,7 @@ describe("fetchPrDetails", () => {
       reviewDecision: "REVIEW_REQUIRED",
       viewerDidAuthor: false,
       canApprove: true,
+      pendingReviewCommentCount: null,
       reviewers: [
         { name: "luigi", state: "APPROVED", isStale: false },
         { name: "mario", state: "REQUESTED", isStale: false },
@@ -697,6 +700,32 @@ describe("fetchPrDetails", () => {
     const details = await fetchPrDetails("token", "PR_42", "feature/thing");
 
     expect(details.canApprove).toBe(true);
+  });
+
+  it("should map the viewer's pending review comment count", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "jane" },
+        node: buildDetailsNode({ pendingReviews: { nodes: [{ author: { login: "jane" }, comments: { totalCount: 3 } }] } }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.pendingReviewCommentCount).toBe(3);
+  });
+
+  it("should ignore a pending review authored by someone else", async () => {
+    stubFetch({
+      data: {
+        viewer: { login: "jane" },
+        node: buildDetailsNode({ pendingReviews: { nodes: [{ author: { login: "someone-else" }, comments: { totalCount: 3 } }] } }),
+      },
+    });
+
+    const details = await fetchPrDetails("token", "PR_42", "feature/thing");
+
+    expect(details.pendingReviewCommentCount).toBeNull();
   });
 
   it("should map check URLs from detailsUrl and targetUrl", async () => {

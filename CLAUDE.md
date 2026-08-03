@@ -107,7 +107,7 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 ### 6. Mutations — `github/github.ts`
 
 - `addPrComment` (`addComment`).
-- `submitPrReview` (`addPullRequestReview` APPROVE / REQUEST_CHANGES — request changes requires a body, GitHub rule).
+- `submitPrReview` (`addPullRequestReview` APPROVE / REQUEST_CHANGES — request changes requires a body, GitHub rule). The composer only takes this path when no pending review exists: with one, all three composer buttons submit the pending review instead (`submitPendingReview`, GitHub "Finish your review" parity — a second `addPullRequestReview` would be rejected, one pending review per user per PR). Detection is two-source with registry precedence: `ReviewController.getKnownPendingReviewId` (tri-state — `undefined` means this window never loaded threads) wins when it has a snapshot, the details query's `pendingReviews` alias (`IPrDetails.pendingReviewCommentCount`, also feeds the composer banner) covers cross-window/pre-reload pending reviews.
 - `mergePr` (`mergePullRequest`, method validated against repo-allowed set).
 - `markPrReadyForReview` (own open drafts only, no confirmation modal — it is reversible).
 - `updatePrBranch` (`updatePullRequestBranch` with `updateMethod` REBASE or MERGE — the preselected one comes from `githubControlCenter.updateBranch.defaultMethod`, REBASE out of the box, offered when the PR branch is behind base — detected via `baseRef.compare(headRef).behindBy`, NOT `mergeStateStatus`: that field only reports `BEHIND` under strict branch protection and shows `BLOCKED` otherwise).
@@ -127,7 +127,7 @@ The poll runs one cycle every 150s base interval plus manual refresh, self-resch
 
 - Uses the built-in `vscode.git` extension API (minimal `IGitExtension` interface, no dependency): finds the workspace repository whose remote URL contains the PR repo, `fetch` + `checkout(headRefName)` (git DWIM creates the tracking branch); the git plumbing stays in `extension.ts`, injected into `DetailsSession` as the `checkout` dep.
 - Cross-fork PRs are rejected with an error toast by design.
-- All actions go through modal confirmations (except plain comments) and an in-flight guard in `DetailsSession`; success → toast + list refresh + panel re-fetch, failure → error toast + webview buttons re-enabled via the `reenable` message (keeps the typed comment alive).
+- All actions go through modal confirmations (except plain comments — but a comment while a pending review exists submits that review, publishes its drafts, and is therefore confirmed; the Approve / Request changes confirmation says so too on that path) and an in-flight guard in `DetailsSession`; success → toast + list refresh + panel re-fetch, failure → error toast + webview buttons re-enabled via the `reenable` message (keeps the typed comment alive).
 - `reenable` restores exactly the buttons `send()` froze — never buttons rendered disabled by design (brief pending/done) — and is never posted while a mutation is in flight.
 
 ### 10. Code review

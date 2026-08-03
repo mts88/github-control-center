@@ -193,7 +193,7 @@ const BASE_STYLE = `
   .merge-box .row:last-child { border-bottom: none; }
   .merge-box .ok { color: var(--gr-green); }
   .merge-box .ko { color: var(--gr-red); }
-  .merge-box .neutral { color: var(--gr-muted); }
+  .neutral { color: var(--gr-muted); }
   .merge-box .pending { color: var(--vscode-charts-yellow, #d29922); }
   .merge-box ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 180px; overflow-y: auto; }
   .merge-box li { padding: 2px 0; color: var(--gr-muted); }
@@ -658,8 +658,18 @@ function renderComposer(details: IPrDetails): string {
     ? `<button id="request-changes" class="btn-danger">Request changes</button>
        <button id="approve" class="btn-approve"${approveAttrs}>Approve</button>`
     : "";
+  const pendingCount = details.pendingReviewCommentCount;
+  const pendingActions = canReview ? "Comment, Approve or Request changes" : "Comment";
+  const draftCountLabel = pendingCount === 1 ? "1 draft comment" : `${pendingCount} draft comments`;
+  // a pending review can outlive its last draft: only mention drafts when there are some
+  const draftSuffix = pendingCount === 0 ? "" : ` with ${draftCountLabel}`;
+  const pendingHint =
+    pendingCount === null
+      ? ""
+      : `<div class="neutral">You have a pending review${draftSuffix} — ${pendingActions} will submit it.</div>`;
   return `
   <div class="composer">
+    ${pendingHint}
     <textarea id="composer-text" placeholder="Leave a comment"></textarea>
     <div class="buttons">
       ${reviewButtons}
@@ -868,7 +878,8 @@ export function renderPrDetailsHtml(
 
     function syncComposerButtons() {
       const hasText = composerText.value.trim().length > 0;
-      commentButton.disabled = !hasText;
+      // a pending review submits on Comment even with an empty summary: the drafts carry the content
+      commentButton.disabled = !hasText && ${processedDetails.pendingReviewCommentCount === null};
       if (requestChangesButton) {
         requestChangesButton.disabled = !hasText;
       }

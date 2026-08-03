@@ -174,6 +174,8 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       await discardPendingReview(await requireToken(), pendingReviewId);
       await reviewController.reload(pr);
+      // the open details panel drops its pending-review banner without waiting a poll
+      void detailsSession.refreshOpenDetails();
     } catch (error) {
       void vscode.window.showErrorMessage(`Discarding the review failed: ${toErrorMessage(error)}`);
     }
@@ -227,6 +229,8 @@ export function activate(context: vscode.ExtensionContext): void {
       // drop the gutter placeholder: the server truth rematerializes on reload
       thread.dispose();
       await reviewController.reload(pr);
+      // the open details panel learns about the (possibly new) pending review without waiting a poll
+      void detailsSession.refreshOpenDetails();
     } catch (error) {
       void vscode.window.showErrorMessage(`Adding the comment failed: ${toErrorMessage(error)}`);
     }
@@ -478,6 +482,18 @@ export function activate(context: vscode.ExtensionContext): void {
     runAiPrompt,
     addPrComment,
     submitPrReview,
+    submitPendingReview: async (token, prId, event, body) => {
+      await submitPendingReview(token, prId, event, body);
+      // resync the pending status bar / context key / thread labels; the review is already
+      // submitted, so a reload failure must never fail the mutation
+      const registered = reviewController.getPr(prId);
+      if (registered) {
+        reviewController.reload(registered).catch((error: unknown) => {
+          output.appendLine(`[${new Date().toISOString()}] Review threads reload failed: ${toErrorMessage(error)}`);
+        });
+      }
+    },
+    getPendingReviewId: (prId) => reviewController.getKnownPendingReviewId(prId),
     mergePr,
     markPrReadyForReview,
     updatePrBranch,

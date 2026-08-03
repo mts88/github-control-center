@@ -31,6 +31,7 @@ function buildDetails(overrides: Partial<IPrDetails> = {}): IPrDetails {
     reviewDecision: "REVIEW_REQUIRED",
     viewerDidAuthor: false,
     canApprove: true,
+    pendingReviewCommentCount: null,
     reviewers: [{ name: "luigi", state: "APPROVED" }],
     checks: [{ name: "build", status: "SUCCESS" }],
     checksTotal: 1,
@@ -537,6 +538,42 @@ describe("renderPrDetailsHtml", () => {
       const html = render({ canApprove: true });
 
       expect(html).not.toMatch(/<button id="approve"[^>]*\bdisabled\b/);
+    });
+
+    it("should show the pending review hint with the draft comment count", () => {
+      const html = render({ pendingReviewCommentCount: 2 });
+
+      expect(html).toContain("You have a pending review with 2 draft comments — Comment, Approve or Request changes will submit it.");
+    });
+
+    it("should use the singular form for one draft comment", () => {
+      const html = render({ pendingReviewCommentCount: 1 });
+
+      expect(html).toContain("1 draft comment —");
+    });
+
+    it("should only mention Comment in the hint on the viewer's own PR", () => {
+      const html = render({ pendingReviewCommentCount: 1, viewerDidAuthor: true });
+
+      expect(html).toContain("— Comment will submit it.");
+    });
+
+    it("should omit the draft count when the pending review has no drafts left", () => {
+      const html = render({ pendingReviewCommentCount: 0 });
+
+      expect(html).toContain("You have a pending review — Comment, Approve or Request changes will submit it.");
+    });
+
+    it("should not show the pending review hint when no pending review exists", () => {
+      expect(render()).not.toContain("pending review with");
+    });
+
+    it("should keep the Comment button clickable on an empty composer while a pending review exists", () => {
+      expect(render({ pendingReviewCommentCount: 0 })).toContain("commentButton.disabled = !hasText && false;");
+    });
+
+    it("should disable the Comment button on an empty composer when no pending review exists", () => {
+      expect(render()).toContain("commentButton.disabled = !hasText && true;");
     });
   });
 

@@ -149,6 +149,8 @@ export interface IPrDetails {
   viewerDidAuthor: boolean;
   /** false when the viewer's latest review is still a current APPROVED (same commit, no fresh re-request) */
   canApprove: boolean;
+  /** inline draft comment count of the viewer's PENDING review; null when none exists */
+  pendingReviewCommentCount: number | null;
   reviewers: IPrReviewer[];
   checks: IPrCheck[];
   checksTotal: number;
